@@ -1,0 +1,16 @@
+pub use crate::prelude::*;
+use super::*;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum MessageComplainedEventType {
+    #[serde(rename = "event")]
+    Event,
+}
+impl fmt::Display for MessageComplainedEventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Event => "event",
+        };
+        write!(f, "{}", s)
+    }
+}

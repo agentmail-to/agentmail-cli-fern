@@ -1,0 +1,231 @@
+use crate::api::*;
+use crate::{ApiError, ClientConfig, HttpClient, QueryBuilder, RequestOptions};
+use reqwest::Method;
+
+pub struct DraftsClient2 {
+    pub http_client: HttpClient,
+}
+
+impl DraftsClient2 {
+    pub fn new(config: ClientConfig) -> Result<Self, ApiError> {
+        Ok(Self {
+            http_client: HttpClient::new(config.clone())?,
+        })
+    }
+
+    /// **CLI:**
+    /// ```bash
+    /// agentmail inboxes:drafts list --inbox-id <inbox_id>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn list(
+        &self,
+        inbox_id: &InboxesInboxId,
+        request: &InboxesDraftsListQueryRequest,
+        options: Option<RequestOptions>,
+    ) -> Result<ListDraftsResponse, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::GET,
+                &format!("v0/inboxes/{}/drafts", inbox_id.0),
+                None,
+                QueryBuilder::new()
+                    .serialize("limit", request.limit.clone())
+                    .serialize("page_token", request.page_token.clone())
+                    .string_array("labels", request.labels.clone())
+                    .serialize("before", request.before.clone())
+                    .serialize("after", request.after.clone())
+                    .serialize("ascending", request.ascending.clone())
+                    .build(),
+                options,
+            )
+            .await
+    }
+
+    /// **CLI:**
+    /// ```bash
+    /// agentmail inboxes:drafts create --inbox-id <inbox_id> --to recipient@example.com --subject "Draft subject" --text "Draft body"
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn create(
+        &self,
+        inbox_id: &InboxesInboxId,
+        request: &CreateDraftRequest,
+        options: Option<RequestOptions>,
+    ) -> Result<Draft, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::POST,
+                &format!("v0/inboxes/{}/drafts", inbox_id.0),
+                Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),
+                None,
+                options,
+            )
+            .await
+    }
+
+    /// **CLI:**
+    /// ```bash
+    /// agentmail inboxes:drafts get --inbox-id <inbox_id> --draft-id <draft_id>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn get(
+        &self,
+        inbox_id: &InboxesInboxId,
+        draft_id: &DraftId,
+        options: Option<RequestOptions>,
+    ) -> Result<Draft, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::GET,
+                &format!("v0/inboxes/{}/drafts/{}", inbox_id.0, draft_id.0),
+                None,
+                None,
+                options,
+            )
+            .await
+    }
+
+    /// **CLI:**
+    /// ```bash
+    /// agentmail inboxes:drafts delete --inbox-id <inbox_id> --draft-id <draft_id>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// Empty response
+    pub async fn delete(
+        &self,
+        inbox_id: &InboxesInboxId,
+        draft_id: &DraftId,
+        options: Option<RequestOptions>,
+    ) -> Result<(), ApiError> {
+        self.http_client
+            .execute_request(
+                Method::DELETE,
+                &format!("v0/inboxes/{}/drafts/{}", inbox_id.0, draft_id.0),
+                None,
+                None,
+                options,
+            )
+            .await
+    }
+
+    /// **CLI:**
+    /// ```bash
+    /// agentmail inboxes:drafts update --inbox-id <inbox_id> --draft-id <draft_id> --subject "Updated subject"
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn update(
+        &self,
+        inbox_id: &InboxesInboxId,
+        draft_id: &DraftId,
+        request: &UpdateDraftRequest,
+        options: Option<RequestOptions>,
+    ) -> Result<Draft, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::PATCH,
+                &format!("v0/inboxes/{}/drafts/{}", inbox_id.0, draft_id.0),
+                Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),
+                None,
+                options,
+            )
+            .await
+    }
+
+    /// **CLI:**
+    /// ```bash
+    /// agentmail inboxes:drafts get-attachment --inbox-id <inbox_id> --draft-id <draft_id> --attachment-id <attachment_id>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn get_attachment(
+        &self,
+        inbox_id: &InboxesInboxId,
+        draft_id: &DraftId,
+        attachment_id: &AttachmentId,
+        options: Option<RequestOptions>,
+    ) -> Result<AttachmentResponse, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::GET,
+                &format!(
+                    "v0/inboxes/{}/drafts/{}/attachments/{}",
+                    inbox_id.0, draft_id.0, attachment_id.0
+                ),
+                None,
+                None,
+                options,
+            )
+            .await
+    }
+
+    /// **CLI:**
+    /// ```bash
+    /// agentmail inboxes:drafts send --inbox-id <inbox_id> --draft-id <draft_id>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn send(
+        &self,
+        inbox_id: &InboxesInboxId,
+        draft_id: &DraftId,
+        request: &UpdateMessageRequest,
+        options: Option<RequestOptions>,
+    ) -> Result<SendMessageResponse, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::POST,
+                &format!("v0/inboxes/{}/drafts/{}/send", inbox_id.0, draft_id.0),
+                Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),
+                None,
+                options,
+            )
+            .await
+    }
+}

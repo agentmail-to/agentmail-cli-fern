@@ -1,0 +1,228 @@
+use crate::api::*;
+use crate::{ApiError, ClientConfig, HttpClient, QueryBuilder, RequestOptions};
+use reqwest::Method;
+
+pub struct ThreadsClient3 {
+    pub http_client: HttpClient,
+}
+
+impl ThreadsClient3 {
+    pub fn new(config: ClientConfig) -> Result<Self, ApiError> {
+        Ok(Self {
+            http_client: HttpClient::new(config.clone())?,
+        })
+    }
+
+    /// Lists threads in the pod, most recent first. Pass `senders`,
+    /// `recipients`, or `subject` to filter by substring. Filtered requests are
+    /// served by search, which caps `limit` at 100. For relevance-ranked
+    /// full-text search, use `Search Threads`.
+    ///
+    /// **CLI:**
+    /// ```bash
+    /// agentmail pods:threads list --pod-id <pod_id>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `senders` - Filter to threads whose senders contain this value (substring match). Repeatable; all values must match.
+    /// * `recipients` - Filter to threads whose recipients contain this value (substring match). Repeatable; all values must match.
+    /// * `subject` - Filter to threads whose subject contains this value (substring match). Repeatable; all values must match.
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn list(
+        &self,
+        pod_id: &PodsPodId,
+        request: &PodsThreadsListQueryRequest,
+        options: Option<RequestOptions>,
+    ) -> Result<ListThreadsResponse, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::GET,
+                &format!("v0/pods/{}/threads", pod_id.0),
+                None,
+                QueryBuilder::new()
+                    .serialize("limit", request.limit.clone())
+                    .serialize("page_token", request.page_token.clone())
+                    .string_array("labels", request.labels.clone())
+                    .serialize("before", request.before.clone())
+                    .serialize("after", request.after.clone())
+                    .serialize("ascending", request.ascending.clone())
+                    .serialize("include_spam", request.include_spam.clone())
+                    .serialize("include_blocked", request.include_blocked.clone())
+                    .serialize(
+                        "include_unauthenticated",
+                        request.include_unauthenticated.clone(),
+                    )
+                    .serialize("include_trash", request.include_trash.clone())
+                    .serialize("senders", request.senders.clone())
+                    .serialize("recipients", request.recipients.clone())
+                    .serialize("subject", request.subject.clone())
+                    .build(),
+                options,
+            )
+            .await
+    }
+
+    /// Full-text search across threads in the pod, ranked by relevance. The
+    /// query is matched against senders, recipients, and subject (substring)
+    /// and the message body (tokenized full text). Spam, trash, blocked, and
+    /// unauthenticated threads are always excluded. `limit` cannot exceed 100.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn search(
+        &self,
+        pod_id: &PodsPodId,
+        request: &PodsThreadsSearchQueryRequest,
+        options: Option<RequestOptions>,
+    ) -> Result<SearchThreadsResponse, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::GET,
+                &format!("v0/pods/{}/threads/search", pod_id.0),
+                None,
+                QueryBuilder::new()
+                    .serialize("q", Some(request.q.clone()))
+                    .serialize("limit", request.limit.clone())
+                    .serialize("page_token", request.page_token.clone())
+                    .serialize("before", request.before.clone())
+                    .serialize("after", request.after.clone())
+                    .build(),
+                options,
+            )
+            .await
+    }
+
+    /// **CLI:**
+    /// ```bash
+    /// agentmail pods:threads get --pod-id <pod_id> --thread-id <thread_id>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn get(
+        &self,
+        pod_id: &PodsPodId,
+        thread_id: &ThreadId,
+        options: Option<RequestOptions>,
+    ) -> Result<Thread, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::GET,
+                &format!("v0/pods/{}/threads/{}", pod_id.0, thread_id.0),
+                None,
+                None,
+                options,
+            )
+            .await
+    }
+
+    /// Moves the thread to trash by adding a trash label to all messages. If the thread is already in trash, it will be permanently deleted. Use `permanent=true` to force permanent deletion.
+    ///
+    /// **CLI:**
+    /// ```bash
+    /// agentmail pods:threads delete --pod-id <pod_id> --thread-id <thread_id>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `permanent` - If true, permanently delete the thread instead of moving to trash.
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// Empty response
+    pub async fn delete(
+        &self,
+        pod_id: &PodsPodId,
+        thread_id: &ThreadId,
+        request: &PodsThreadsDeleteQueryRequest,
+        options: Option<RequestOptions>,
+    ) -> Result<(), ApiError> {
+        self.http_client
+            .execute_request(
+                Method::DELETE,
+                &format!("v0/pods/{}/threads/{}", pod_id.0, thread_id.0),
+                None,
+                QueryBuilder::new()
+                    .serialize("permanent", request.permanent.clone())
+                    .build(),
+                options,
+            )
+            .await
+    }
+
+    /// Updates thread labels. Cannot add or remove system labels (sent, received, bounced, etc.). Rejects requests with a `422` for threads with 100 or more messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn update(
+        &self,
+        pod_id: &PodsPodId,
+        thread_id: &ThreadId,
+        request: &UpdateThreadRequest,
+        options: Option<RequestOptions>,
+    ) -> Result<UpdateThreadResponse, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::PATCH,
+                &format!("v0/pods/{}/threads/{}", pod_id.0, thread_id.0),
+                Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),
+                None,
+                options,
+            )
+            .await
+    }
+
+    /// **CLI:**
+    /// ```bash
+    /// agentmail pods:threads get-attachment --pod-id <pod_id> --thread-id <thread_id> --attachment-id <attachment_id>
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    pub async fn get_attachment(
+        &self,
+        pod_id: &PodsPodId,
+        thread_id: &ThreadId,
+        attachment_id: &AttachmentId,
+        options: Option<RequestOptions>,
+    ) -> Result<AttachmentResponse, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::GET,
+                &format!(
+                    "v0/pods/{}/threads/{}/attachments/{}",
+                    pod_id.0, thread_id.0, attachment_id.0
+                ),
+                None,
+                None,
+                options,
+            )
+            .await
+    }
+}
