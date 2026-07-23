@@ -1,7 +1,5 @@
 # AgentMail CLI
 
-[![npm shield](https://img.shields.io/npm/v/agentmail-cli)](https://www.npmjs.com/package/agentmail-cli)
-
 Command-line interface for the AgentMail API.
 
 ## Table of contents
@@ -19,21 +17,13 @@ Command-line interface for the AgentMail API.
 
 ## Installation
 
-Install the CLI globally via npm:
+Install the [Rust toolchain](https://rustup.rs/) if you don't have it:
 
 ```bash
-npm install -g agentmail-cli
+curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Or run it directly without installing:
-
-```bash
-npx agentmail-cli --help
-```
-
-### Build from source
-
-If you prefer to build from source, install the [Rust toolchain](https://rustup.rs/) and run:
+Then build from source:
 
 ```bash
 cargo build --release
