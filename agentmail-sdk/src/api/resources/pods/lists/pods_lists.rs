@@ -25,6 +25,34 @@ impl ListsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .lists
+    ///         .list(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &Direction::Send,
+    ///             &ListType::Allow,
+    ///             &PodsListsListQueryRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         pod_id: &PodsPodId,
@@ -59,6 +87,35 @@ impl ListsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .lists
+    ///         .create(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &Direction::Send,
+    ///             &ListType::Allow,
+    ///             &CreateListEntryRequest {
+    ///                 entry: "entry".to_string(),
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn create(
         &self,
         pod_id: &PodsPodId,
@@ -91,6 +148,32 @@ impl ListsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .lists
+    ///         .get(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &Direction::Send,
+    ///             &ListType::Allow,
+    ///             &"entry".to_string(),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get(
         &self,
         pod_id: &PodsPodId,
@@ -126,6 +209,32 @@ impl ListsClient3 {
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .lists
+    ///         .delete(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &Direction::Send,
+    ///             &ListType::Allow,
+    ///             &"entry".to_string(),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         pod_id: &PodsPodId,

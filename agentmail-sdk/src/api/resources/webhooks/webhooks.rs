@@ -25,6 +25,30 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .list(
+    ///             &WebhooksListQueryRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         request: &WebhooksListQueryRequest,
@@ -57,6 +81,36 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .create(
+    ///             &WebhooksCreateWebhookRequest {
+    ///                 url: WebhooksURL("url".to_string()),
+    ///                 event_types: WebhooksCreateWebhookEventTypes(EventTypes(vec![
+    ///                     EventType::MessageReceived,
+    ///                 ])),
+    ///                 inbox_ids: None,
+    ///                 client_id: None,
+    ///                 pod_ids: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn create(
         &self,
         request: &WebhooksCreateWebhookRequest,
@@ -85,6 +139,25 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .get(&WebhooksWebhookID("webhook_id".to_string()), None)
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get(
         &self,
         webhook_id: &WebhooksWebhookId,
@@ -113,6 +186,25 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .delete(&WebhooksWebhookID("webhook_id".to_string()), None)
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         webhook_id: &WebhooksWebhookId,
@@ -144,6 +236,31 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .update(
+    ///             &WebhooksWebhookID("webhook_id".to_string()),
+    ///             &WebhooksUpdateWebhookRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn update(
         &self,
         webhook_id: &WebhooksWebhookId,

@@ -1,6 +1,6 @@
 # AgentMail CLI
 
-[![npm shield](https://img.shields.io/npm/v/agentmail-cli)](https://www.npmjs.com/package/agentmail-cli)
+[![npm shield](https://img.shields.io/npm/v/agentmail-cli-fern)](https://www.npmjs.com/package/agentmail-cli-fern)
 
 Command-line interface for the AgentMail API.
 
@@ -19,16 +19,28 @@ Command-line interface for the AgentMail API.
 
 ## Installation
 
-Install the CLI globally via npm:
+### Shell (macOS / Linux)
 
 ```bash
-npm install -g agentmail-cli
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/agentmail-to/agentmail-cli-fern/releases/latest/download/agentmail-installer.sh | sh
 ```
 
-Or run it directly without installing:
+### PowerShell (Windows)
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/agentmail-to/agentmail-cli-fern/releases/latest/download/agentmail-installer.ps1 | iex"
+```
+
+### npm
 
 ```bash
-npx agentmail-cli --help
+npm install -g agentmail-cli-fern
+```
+
+Or run directly without installing:
+
+```bash
+npx agentmail-cli-fern --help
 ```
 
 ### Build from source
@@ -45,6 +57,7 @@ cargo build --release
 Set the following environment variable(s) before using the CLI:
 
 ```bash
+export AGENTMAIL_API_KEY="<your token>"
 export AGENTMAIL_TOKEN="<your token>"
 ```
 

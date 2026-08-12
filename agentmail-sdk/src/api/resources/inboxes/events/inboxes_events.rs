@@ -27,6 +27,32 @@ impl EventsClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .events
+    ///         .list(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &InboxesEventsListQueryRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         inbox_id: &InboxesInboxId,

@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// Granular permissions for the API key. When ommitted all permissions are granted. Otherwise, only permissions set to true are granted.

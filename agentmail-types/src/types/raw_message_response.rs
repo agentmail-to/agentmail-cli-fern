@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// S3 presigned URL to download the raw .eml file.

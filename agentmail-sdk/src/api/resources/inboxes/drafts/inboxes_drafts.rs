@@ -25,6 +25,37 @@ impl DraftsClient2 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .drafts
+    ///         .list(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &InboxesDraftsListQueryRequest {
+    ///                 limit: None,
+    ///                 page_token: None,
+    ///                 labels: vec![],
+    ///                 before: None,
+    ///                 after: None,
+    ///                 ascending: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         inbox_id: &InboxesInboxId,
@@ -61,6 +92,32 @@ impl DraftsClient2 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .drafts
+    ///         .create(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &CreateDraftRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn create(
         &self,
         inbox_id: &InboxesInboxId,
@@ -90,6 +147,30 @@ impl DraftsClient2 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .drafts
+    ///         .get(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &DraftID("draft_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get(
         &self,
         inbox_id: &InboxesInboxId,
@@ -119,6 +200,30 @@ impl DraftsClient2 {
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .drafts
+    ///         .delete(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &DraftID("draft_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         inbox_id: &InboxesInboxId,
@@ -148,6 +253,33 @@ impl DraftsClient2 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .drafts
+    ///         .update(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &DraftID("draft_id".to_string()),
+    ///             &UpdateDraftRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn update(
         &self,
         inbox_id: &InboxesInboxId,
@@ -178,6 +310,31 @@ impl DraftsClient2 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .drafts
+    ///         .get_attachment(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &DraftID("draft_id".to_string()),
+    ///             &AttachmentID("attachment_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get_attachment(
         &self,
         inbox_id: &InboxesInboxId,
@@ -211,6 +368,33 @@ impl DraftsClient2 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .drafts
+    ///         .send(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &DraftID("draft_id".to_string()),
+    ///             &UpdateMessageRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn send(
         &self,
         inbox_id: &InboxesInboxId,

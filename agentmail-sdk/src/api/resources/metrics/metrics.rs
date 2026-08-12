@@ -31,6 +31,35 @@ impl MetricsClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .metrics
+    ///         .query_events(
+    ///             &MetricsQueryEventsQueryRequest {
+    ///                 event_types: vec![],
+    ///                 start: None,
+    ///                 end: None,
+    ///                 period: None,
+    ///                 limit: None,
+    ///                 descending: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn query_events(
         &self,
         request: &MetricsQueryEventsQueryRequest,
@@ -67,6 +96,35 @@ impl MetricsClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .metrics
+    ///         .query_usage(
+    ///             &MetricsQueryUsageQueryRequest {
+    ///                 usage_types: vec![],
+    ///                 start: None,
+    ///                 end: None,
+    ///                 period: None,
+    ///                 limit: None,
+    ///                 descending: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn query_usage(
         &self,
         request: &MetricsQueryUsageQueryRequest,

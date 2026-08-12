@@ -6,9 +6,9 @@
 //! The generated `main.rs` calls `custom::register(app)` at
 //! startup, composing your commands into the CLI at compile time.
 //!
-//! Each handler receives an `AppContext`. Use `sdk_glue::sdk_client(ctx)`
+//! Each handler receives an `AppContext`. Use `super::sdk::client(ctx)`
 //! to get a fully-wired SDK client that inherits the CLI's auth,
-//! retries, TLS, and global headers. Use `sdk_glue::block_on(future)`
+//! retries, TLS, and global headers. Use `super::sdk::block_on(future)`
 //! to run async SDK calls from synchronous handler context.
 //! Types are available via `agentmail_sdk::api::*`.
 
@@ -29,8 +29,8 @@ pub fn register(app: CliApp) -> CliApp {
     //         .arg(clap::Arg::new("plant-id").required(true)),
     //     |matches, ctx| {
     //         let plant_id = matches.get_one::<String>("plant-id").unwrap();
-    //         let client = super::sdk_glue::sdk_client(ctx);
-    //         let plant = super::sdk_glue::block_on(
+    //         let client = super::sdk::client(ctx);
+    //         let plant = super::sdk::block_on(
     //             client.plants.get_plant(plant_id, None),
     //         )?;
     //         println!("{}", serde_json::to_string_pretty(&plant).unwrap());

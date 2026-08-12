@@ -27,6 +27,22 @@ impl AuthClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client.auth.me(None).await;
+    /// }
+    /// ```
     pub async fn me(&self, options: Option<RequestOptions>) -> Result<Identity, ApiError> {
         self.http_client
             .execute_request(Method::GET, "v0/auth/me", None, None, options)
