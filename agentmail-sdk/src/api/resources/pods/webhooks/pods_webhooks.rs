@@ -25,6 +25,32 @@ impl WebhooksClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .webhooks
+    ///         .list(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &PodsWebhooksListQueryRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         pod_id: &PodsPodId,
@@ -60,6 +86,39 @@ impl WebhooksClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .webhooks
+    ///         .create(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &WebhooksCreatePodWebhookRequest {
+    ///                 webhooks_create_inbox_webhook_request_fields: WebhooksCreateInboxWebhookRequest {
+    ///                     url: WebhooksURL("url".to_string()),
+    ///                     event_types: WebhooksCreateWebhookEventTypes(EventTypes(vec![
+    ///                         EventType::MessageReceived,
+    ///                     ])),
+    ///                     ..Default::default()
+    ///                 },
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn create(
         &self,
         pod_id: &PodsPodId,
@@ -89,6 +148,30 @@ impl WebhooksClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .webhooks
+    ///         .get(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &WebhooksWebhookID("webhook_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get(
         &self,
         pod_id: &PodsPodId,
@@ -118,6 +201,30 @@ impl WebhooksClient3 {
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .webhooks
+    ///         .delete(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &WebhooksWebhookID("webhook_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         pod_id: &PodsPodId,
@@ -147,6 +254,36 @@ impl WebhooksClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .webhooks
+    ///         .update(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &WebhooksWebhookID("webhook_id".to_string()),
+    ///             &WebhooksUpdatePodWebhookRequest {
+    ///                 webhooks_update_inbox_webhook_request_fields: WebhooksUpdateInboxWebhookRequest {
+    ///                     ..Default::default()
+    ///                 },
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn update(
         &self,
         pod_id: &PodsPodId,

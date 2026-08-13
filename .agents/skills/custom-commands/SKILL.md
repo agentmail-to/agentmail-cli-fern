@@ -16,7 +16,7 @@ auth, retries, TLS, base URL, and global headers — zero configuration required
 
 ```
 cli/agentmail/custom.rs    ← Your command handlers (protected by .fernignore)
-cli/agentmail/sdk_glue.rs  ← Generated bridge: sdk_client() + block_on()
+cli/agentmail/sdk.rs       ← Generated bridge: client() + block_on()
 cli/agentmail/main.rs      ← Generated entrypoint (calls custom::register)
 agentmail-sdk/             ← Co-generated typed SDK crate
 agentmail-types/           ← Co-generated typed model crate
@@ -40,8 +40,8 @@ pub fn register(app: CliApp) -> CliApp {
         ,
         |matches, ctx| {
             let inbox_id = matches.get_one::<String>("inbox_id").unwrap();
-            let client = super::sdk_glue::sdk_client(ctx);
-            let result = super::sdk_glue::block_on(
+            let client = super::sdk::client(ctx);
+            let result = super::sdk::block_on(
                 client.inboxes.get(inbox_id),
             )?;
             println!("{}", serde_json::to_string_pretty(&result).unwrap());
@@ -60,7 +60,7 @@ agentmail get <inbox_id>
 
 ### 2. Available SDK Clients
 
-The `sdk_glue::sdk_client(ctx)` call returns a `agentmail_sdk::api::Client`
+The `super::sdk::client(ctx)` call returns a `agentmail_sdk::api::Client`
 with the following sub-clients:
 
 | Field | Type | Description |
@@ -98,12 +98,12 @@ with the following sub-clients:
 
 **Get the SDK client** (execution-sharing, fully authenticated):
 ```rust
-let client = super::sdk_glue::sdk_client(ctx);
+let client = super::sdk::client(ctx);
 ```
 
 **Run an async SDK call from a sync handler:**
 ```rust
-let result = super::sdk_glue::block_on(
+let result = super::sdk::block_on(
     client.some_resource.some_method(args),
 )?;
 ```
@@ -118,7 +118,8 @@ use agentmail_sdk::api::*;
 Custom commands automatically inherit the CLI's authentication.
 The following auth schemes are configured:
 
-- **BearerAuth** (bearer): env `AGENTMAIL_TOKEN`
+- **BearerAuth** (bearer): env `AGENTMAIL_API_KEY`
+- **TokenAuth** (bearer): env `AGENTMAIL_TOKEN`
 
 No manual auth wiring is needed in custom command handlers.
 
@@ -127,7 +128,7 @@ No manual auth wiring is needed in custom command handlers.
 | File | Regenerated? | Notes |
 |------|-------------|-------|
 | `cli/agentmail/custom.rs` | **No** | Protected by `.fernignore` |
-| `cli/agentmail/sdk_glue.rs` | Yes | Bridges AppContext → SDK client |
+| `cli/agentmail/sdk.rs` | Yes | Bridges AppContext → SDK client |
 | `cli/agentmail/main.rs` | Yes | Calls `custom::register(app)` |
 | `agentmail-sdk/` | Yes | Co-generated typed SDK crate |
 | `agentmail-types/` | Yes | Co-generated typed models |

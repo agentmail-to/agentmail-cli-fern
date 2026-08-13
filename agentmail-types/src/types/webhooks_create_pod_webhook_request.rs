@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// Create a webhook scoped to a pod. The pod comes from the path, so `pod_ids` is not accepted.

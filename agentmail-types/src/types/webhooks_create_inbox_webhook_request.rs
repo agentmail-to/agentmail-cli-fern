@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// Create a webhook scoped to an inbox. The inbox comes from the path, so `inbox_ids` and `pod_ids`

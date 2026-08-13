@@ -97,11 +97,16 @@ pub(crate) const BUILTIN_FLAG_NAMES: &[&str] = &[
     "page-all",
     "page-limit",
     "page-delay",
+    "no-pager",
     "no-extract",
     "no-retry",
     "no-stream",
     "quiet",
+    "query",
     "help",
+    "debug",
+    "schema",
+    "user-agent-suffix",
 ];
 
 /// The non-auth portion of the `--help` footer. Auth env vars are
@@ -110,13 +115,18 @@ pub(crate) const BUILTIN_FLAG_NAMES: &[&str] = &[
 /// avoids stale `{NAME}_API_KEY` boilerplate.
 pub fn after_help_footer(binary_name: &str) -> String {
     let prefix = binary_name.to_uppercase().replace('-', "_");
+    // The suffix flag/env names default to `--user-agent-suffix` /
+    // `<NAME>_USER_AGENT_SUFFIX` but can be renamed at generation time.
+    let ua_env = format!("{prefix}{}", crate::user_agent::suffix_env_segment());
+    let ua_flag = crate::user_agent::suffix_flag();
     format!(
         "Environment variables:\n  \
          {prefix}_BASE_URL             Override the API base URL\n  \
          {prefix}_CA_BUNDLE            Path to PEM file with extra trust roots (or SSL_CERT_FILE)\n  \
          {prefix}_INSECURE=1           Skip TLS verification (debugging only)\n  \
          {prefix}_PROXY                HTTP(S) proxy URL\n  \
-         {prefix}_TIMEOUT_SECS         Total request timeout\n\n\
+         {prefix}_TIMEOUT_SECS         Total request timeout\n  \
+         {ua_env}    Product token appended to the User-Agent (e.g. my-app/1.0; --{ua_flag} wins)\n\n\
          Standard env vars (HTTPS_PROXY / HTTP_PROXY / NO_PROXY / SSL_CERT_FILE) are also honored."
     )
 }
@@ -144,7 +154,7 @@ pub fn build_cli(doc: &RestDescription) -> Command {
         .arg(
             clap::Arg::new("format")
                 .long("format")
-                .help("Output format: json (default), table, yaml, csv")
+                .help("Output format: json, table, yaml, csv, raw, jsonl, http. Default: table when stdout is a TTY, json when piped. Override default with <NAME>_OUTPUT env var. raw emits unmodified server response bytes. jsonl emits one compact JSON value per line (NDJSON). http emits the full HTTP response (status line + headers + body).")
                 .value_name("FORMAT")
                 .global(true),
         )
@@ -156,11 +166,32 @@ pub fn build_cli(doc: &RestDescription) -> Command {
                 .global(true),
         )
         .arg(
+            clap::Arg::new("user-agent-suffix")
+                .long(crate::user_agent::suffix_flag())
+                .help(format!(
+                    "Product token appended to the User-Agent (e.g. my-app/1.0), so a tool built on top of this CLI can tag its traffic. Takes precedence over <NAME>{}.",
+                    crate::user_agent::suffix_env_segment()
+                ))
+                .value_name("TOKEN")
+                .global(true),
+        )
+        .arg(
             clap::Arg::new("quiet")
                 .long("quiet")
                 .short('q')
                 .help("Suppress stdout output on success (errors still go to stderr)")
                 .action(clap::ArgAction::SetTrue)
+                .global(true),
+        )
+        .arg(
+            clap::Arg::new("query")
+                .long("query")
+                .help(
+                    "JMESPath expression applied to the response before formatting. \
+                     For streaming responses, events whose projection is null are \
+                     suppressed (use as a per-event filter).",
+                )
+                .value_name("EXPR")
                 .global(true),
         );
 
@@ -351,7 +382,7 @@ fn build_resource_command(
         // matching the regular-param convention above.
         for field in &method.multipart_fields {
             let kebab = to_kebab_flag(&field.wire_name);
-            if BUILTIN_FLAG_NAMES.contains(&kebab.as_str()) {
+            if is_reserved_flag_name(&kebab) {
                 continue;
             }
             method_cmd = method_cmd.arg(build_multipart_field_arg(field));
@@ -378,6 +409,12 @@ fn build_resource_command(
                     .help("Delay in milliseconds between page fetches (default: 100)")
                     .value_name("MS")
                     .value_parser(clap::value_parser!(u64)),
+            )
+            .arg(
+                Arg::new("no-pager")
+                    .long("no-pager")
+                    .help("Disable pager even on interactive terminals")
+                    .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("no-extract")
@@ -618,10 +655,19 @@ pub(crate) fn resolve_param_flag_name(param: &MethodParameter, wire_name: &str) 
             }
         }
     };
-    if BUILTIN_FLAG_NAMES.contains(&flag.as_str()) {
+    if is_reserved_flag_name(&flag) {
         flag = format!("{flag}-param");
     }
     Some(flag)
+}
+
+/// Whether a parameter-derived flag long name is reserved by the runtime
+/// and therefore must be mangled (`-param` suffix) to avoid a clap
+/// duplicate-flag panic. Covers the always-present built-in flags plus a
+/// customer-configured `userAgentSuffixFlag` name that would otherwise
+/// clash with the consumer suffix flag.
+fn is_reserved_flag_name(flag: &str) -> bool {
+    BUILTIN_FLAG_NAMES.contains(&flag) || crate::user_agent::collides_with_suffix_flag(flag)
 }
 
 /// Build a `PossibleValuesParser` that respects an optional `x-fern-enum`
