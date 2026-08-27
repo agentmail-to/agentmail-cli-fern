@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -23,6 +24,8 @@ pub struct ReplyToMessageRequest {
     pub attachments: Option<SendMessageAttachments>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<SendMessageHeaders>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_opens: Option<TrackOpens>,
 }
 
 impl ReplyToMessageRequest {
@@ -44,6 +47,7 @@ pub struct ReplyToMessageRequestBuilder {
     html: Option<MessageHtml>,
     attachments: Option<SendMessageAttachments>,
     headers: Option<SendMessageHeaders>,
+    track_opens: Option<TrackOpens>,
 }
 
 impl ReplyToMessageRequestBuilder {
@@ -97,6 +101,11 @@ impl ReplyToMessageRequestBuilder {
         self
     }
 
+    pub fn track_opens(mut self, value: TrackOpens) -> Self {
+        self.track_opens = Some(value);
+        self
+    }
+
     /// Consumes the builder and constructs a [`ReplyToMessageRequest`].
     pub fn build(self) -> Result<ReplyToMessageRequest, BuildError> {
         Ok(ReplyToMessageRequest {
@@ -110,6 +119,7 @@ impl ReplyToMessageRequestBuilder {
             html: self.html,
             attachments: self.attachments,
             headers: self.headers,
+            track_opens: self.track_opens,
         })
     }
 }

@@ -23,27 +23,86 @@ use crate::openapi::discovery::{
     RestMethod, RetriesConfig, StreamingConfig,
 };
 
-/// Strip a leading `@` (curl-style file prefix), or rewrite `\@` to a literal
-/// `@`. Used at every top-level site that interprets a leading `@` as a file
-/// path (binary-body uploads, multipart file fields).
+/// Encoding mode for an `@`-prefixed file reference. Selected by the URI-style
+/// prefix on the flag value (FER-10532). `Auto` is the implicit default — the
+/// `@<path>` form FER-10436 shipped — and is what every other call site
+/// reaches when no explicit scheme is supplied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AtMode {
+    /// `@<path>` — read file; embed UTF-8 when valid, base64 otherwise.
+    Auto,
+    /// `@file://<path>` — read file; require valid UTF-8 or error.
+    Text,
+    /// `@data://<path>` — read file; always base64-encode.
+    Data,
+}
+
+/// Parsed view of a raw flag value that may carry an `@`/`\@` prefix.
+/// Returned by [`parse_at_ref`] so every `@`-aware call site shares one
+/// parser instead of re-implementing the prefix grammar.
+pub(crate) enum AtRef<'a> {
+    /// Plain value with no `@` prefix; caller treats as a literal path/string.
+    Plain(&'a str),
+    /// `\@<rest>` escape; the value is the literal string `@<rest>`.
+    /// At the binary-body site this literal is still treated as a file path
+    /// (FER-10436 contract); at multipart and nested-JSON sites it is sent
+    /// as-is with no file read.
+    Escaped(String),
+    /// `@<path>`, `@file://<path>`, or `@data://<path>` — a file reference
+    /// whose encoding is dictated by `mode`. `path` is the *inner* path with
+    /// the optional scheme prefix already stripped, ready to hand to the
+    /// filesystem.
+    File { path: Cow<'a, str>, mode: AtMode },
+}
+
+/// Parse the optional `@`/`\@` prefix on a raw flag value. Recognises the
+/// `@file://` (text-only) and `@data://` (always-base64) scheme prefixes
+/// added in FER-10532; everything else preserves the FER-10436 baseline.
+pub(crate) fn parse_at_ref(raw: &str) -> AtRef<'_> {
+    if let Some(rest) = raw.strip_prefix("\\@") {
+        return AtRef::Escaped(format!("@{rest}"));
+    }
+    if let Some(rest) = raw.strip_prefix('@') {
+        if let Some(path) = rest.strip_prefix("file://") {
+            return AtRef::File {
+                path: Cow::Borrowed(path),
+                mode: AtMode::Text,
+            };
+        }
+        if let Some(path) = rest.strip_prefix("data://") {
+            return AtRef::File {
+                path: Cow::Borrowed(path),
+                mode: AtMode::Data,
+            };
+        }
+        return AtRef::File {
+            path: Cow::Borrowed(rest),
+            mode: AtMode::Auto,
+        };
+    }
+    AtRef::Plain(raw)
+}
+
+/// Strip a leading `@` (or `@file://` / `@data://`) curl-style file prefix,
+/// or rewrite `\@` to a literal `@`. Returns the path string the caller
+/// should hand to the filesystem (or validate).
 ///
-/// Returns a [`Cow`] so the common cases (`@path` → `path`, `path` → `path`)
-/// borrow from the input while the rare `\@literal` → `@literal` rewrite
-/// allocates.
+/// This is a thin convenience over [`parse_at_ref`] for the common case
+/// where the caller only needs the inner path (e.g. for control-character
+/// validation). When the encoding mode matters, use [`parse_at_ref`] directly.
 ///
 /// Semantics:
-/// - `"@/tmp/foo"` → `"/tmp/foo"` (curl-style file prefix stripped)
-/// - `"@-"` → `"-"` (stdin sentinel)
-/// - `"/tmp/foo"` → `"/tmp/foo"` (plain path, unchanged)
-/// - `"\\@literal"` → `"@literal"` (escape — caller treats as a literal string,
-///   not a file path)
+/// - `"@/tmp/foo"`         → `"/tmp/foo"`
+/// - `"@file:///tmp/foo"`  → `"/tmp/foo"`
+/// - `"@data:///tmp/foo"`  → `"/tmp/foo"`
+/// - `"@-"`                → `"-"` (stdin sentinel; only meaningful in `Auto` mode)
+/// - `"/tmp/foo"`          → `"/tmp/foo"`
+/// - `"\\@literal"`        → `"@literal"` (escape — literal, not a file ref)
 pub(crate) fn strip_or_escape_at(raw: &str) -> Cow<'_, str> {
-    if let Some(rest) = raw.strip_prefix("\\@") {
-        Cow::Owned(format!("@{rest}"))
-    } else if let Some(rest) = raw.strip_prefix('@') {
-        Cow::Borrowed(rest)
-    } else {
-        Cow::Borrowed(raw)
+    match parse_at_ref(raw) {
+        AtRef::Plain(s) => Cow::Borrowed(s),
+        AtRef::Escaped(literal) => Cow::Owned(literal),
+        AtRef::File { path, .. } => path,
     }
 }
 
@@ -53,17 +112,44 @@ pub(crate) fn is_escaped_literal(raw: &str) -> bool {
     raw.starts_with("\\@")
 }
 
+/// Encode raw file bytes for embedding in a JSON string position or other
+/// text-like context, applying [`AtMode`] semantics. `field` and `path` are
+/// passed only to format the UTF-8 error from `AtMode::Text`.
+pub(crate) fn encode_file_bytes_for_text(
+    bytes: Vec<u8>,
+    mode: AtMode,
+    field: &str,
+    path: &str,
+) -> Result<String, CliError> {
+    match mode {
+        AtMode::Auto => Ok(match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(e) => BASE64.encode(e.into_bytes()),
+        }),
+        AtMode::Text => String::from_utf8(bytes).map_err(|_| {
+            CliError::Validation(format!(
+                "@file://{path} for {field}: file is not valid UTF-8 \
+                 (use @data://{path} to base64-encode binary content, \
+                 or drop the explicit scheme for auto-detection)"
+            ))
+        }),
+        AtMode::Data => Ok(BASE64.encode(bytes)),
+    }
+}
+
 /// Walk a parsed JSON value and resolve `@filename` references found in
 /// string positions. Mirrors Stainless's CLI generator behavior for the
 /// object-shorthand body-flag path (e.g. `--profile '{"pic":"@abe.jpg"}'`).
 ///
 /// Rewrites in place:
-/// - `"\\@literal"` → `"@literal"` (escape — no file read)
-/// - `"@<path>"`     → file contents (UTF-8 if valid, otherwise base64)
-/// - anything else   → unchanged
+/// - `"\\@literal"`         → `"@literal"` (escape — no file read)
+/// - `"@<path>"`            → file contents (UTF-8 if valid, otherwise base64)
+/// - `"@file://<path>"`     → file contents as UTF-8 (errors if not UTF-8)
+/// - `"@data://<path>"`     → base64-encoded file contents (always)
+/// - anything else          → unchanged
 ///
 /// Errors include the file path and a JSON-Pointer-style path to the offending
-/// field for debuggability (e.g. `"/foo/bar/0/baz"`). FER-10436.
+/// field for debuggability (e.g. `"/foo/bar/0/baz"`). FER-10436, FER-10532.
 pub(crate) fn resolve_file_refs(value: &mut Value) -> Result<(), CliError> {
     resolve_file_refs_at_path(value, &mut String::new())
 }
@@ -75,31 +161,37 @@ pub(crate) fn resolve_file_refs(value: &mut Value) -> Result<(), CliError> {
 fn resolve_file_refs_at_path(value: &mut Value, pointer: &mut String) -> Result<(), CliError> {
     match value {
         Value::String(s) => {
-            if is_escaped_literal(s) {
+            match parse_at_ref(s) {
                 // `\@literal` → `@literal`; no disk access.
-                *s = strip_or_escape_at(s).into_owned();
-            } else if let Some(path) = s.strip_prefix('@') {
-                let field = if pointer.is_empty() { "/" } else { pointer.as_str() };
-                // Match the path-safety contract every other file-read site
-                // honors (binary body in binding.rs, multipart in app.rs):
-                // reject control chars / dangerous Unicode before disk I/O so
-                // an adversarial nested value like `@evil\x00path` can't
-                // bypass the safety net the other entry points enforce.
-                crate::output::reject_dangerous_chars(
-                    path,
-                    &format!("JSON field '{field}'"),
-                )?;
-                let bytes = std::fs::read(path).map_err(|io_err| {
-                    CliError::Validation(format!(
-                        "Failed to read file '{path}' for JSON field '{field}': {io_err}"
-                    ))
-                })?;
-                // Embed as UTF-8 when possible (preserves human-readable
-                // diffs in wire bodies); fall back to base64 for binary.
-                *s = match String::from_utf8(bytes) {
-                    Ok(text) => text,
-                    Err(e) => BASE64.encode(e.into_bytes()),
-                };
+                AtRef::Escaped(literal) => *s = literal,
+                // No `@` prefix — leave the value alone.
+                AtRef::Plain(_) => {}
+                AtRef::File { path, mode } => {
+                    let field = if pointer.is_empty() { "/" } else { pointer.as_str() };
+                    // Match the path-safety contract every other file-read site
+                    // honors (binary body in binding.rs, multipart in app.rs):
+                    // reject control chars / dangerous Unicode before disk I/O so
+                    // an adversarial nested value like `@evil\x00path` can't
+                    // bypass the safety net the other entry points enforce.
+                    crate::output::reject_dangerous_chars(
+                        path.as_ref(),
+                        &format!("JSON field '{field}'"),
+                    )?;
+                    let bytes = std::fs::read(path.as_ref()).map_err(|io_err| {
+                        CliError::Validation(format!(
+                            "Failed to read file '{}' for JSON field '{field}': {io_err}",
+                            path.as_ref()
+                        ))
+                    })?;
+                    // Auto preserves the FER-10436 behavior (UTF-8 or base64);
+                    // Text and Data are the FER-10532 explicit modes.
+                    *s = encode_file_bytes_for_text(
+                        bytes,
+                        mode,
+                        &format!("JSON field '{field}'"),
+                        path.as_ref(),
+                    )?;
+                }
             }
             Ok(())
         }
@@ -137,18 +229,22 @@ fn resolve_file_refs_at_path(value: &mut Value, pointer: &mut String) -> Result<
 /// Resolved source for a binary request body (octet-stream uploads etc.).
 ///
 /// Driven by the value passed on the CLI's binary-body flag (`--file`, `--body`,
-/// or whatever name the spec dictates). Accepts four forms:
+/// or whatever name the spec dictates). Accepts six forms:
 ///
 /// - `<PATH>` — plain filesystem path. Sent with `Content-Length`.
 /// - `@<PATH>` — same path, curl-style prefix. Sent with `Content-Length`.
+/// - `@file://<PATH>` — read; require valid UTF-8 or error (FER-10532).
+/// - `@data://<PATH>` — read; always base64-encode the bytes (FER-10532).
 /// - `\@<REST>` — escape: send a file whose path is literally `@<REST>`.
 /// - `-` or `@-` — read from stdin. Sent with `Transfer-Encoding: chunked`
-///   (no length).
+///   (no length). `@file://-` and `@data://-` are treated as a literal file
+///   path named `-`, not stdin.
 pub enum BinaryBodySource<'a> {
-    /// Stream from a file on disk. Content-Length comes from file metadata.
+    /// Stream from a file on disk. `mode` selects raw-byte streaming
+    /// (`Auto`) vs. read-into-memory transforms (`Text`, `Data`).
     /// Owned `Cow` covers the `\@literal` escape; borrowed covers the
     /// common `@path` and `path` cases.
-    File(Cow<'a, str>),
+    File { path: Cow<'a, str>, mode: AtMode },
     /// Read from stdin. Body is streamed with chunked transfer encoding.
     Stdin,
 }
@@ -158,11 +254,24 @@ impl<'a> BinaryBodySource<'a> {
     /// optional `@` prefix (or applying the `\@` escape) happens here so the
     /// rest of the pipeline only sees a clean path or `Stdin`.
     pub fn parse(raw: &'a str) -> Self {
-        let stripped = strip_or_escape_at(raw);
-        if stripped.as_ref() == "-" {
-            Self::Stdin
-        } else {
-            Self::File(stripped)
+        match parse_at_ref(raw) {
+            // Bare `-` and `@-` map to stdin. An explicit scheme (`@file://-` /
+            // `@data://-`) is *not* stdin — the user opted into a literal
+            // file-path interpretation, so `-` is just a filename.
+            AtRef::Plain("-") => Self::Stdin,
+            AtRef::File { path, mode: AtMode::Auto } if path.as_ref() == "-" => Self::Stdin,
+            AtRef::File { path, mode } => Self::File { path, mode },
+            // `\@<REST>` resolves to a literal-path file read at this site
+            // (FER-10436). The literal already carries no scheme prefix, so
+            // it inherits `Auto` byte-streaming semantics.
+            AtRef::Escaped(literal) => Self::File {
+                path: Cow::Owned(literal),
+                mode: AtMode::Auto,
+            },
+            AtRef::Plain(s) => Self::File {
+                path: Cow::Borrowed(s),
+                mode: AtMode::Auto,
+            },
         }
     }
 }
@@ -223,6 +332,10 @@ pub struct PaginationConfig {
     /// Dotted path in JSON response to find the next page token (default: "nextPageToken").
     /// Supports nested paths like "pagination.next_page_token".
     pub token_response_path: String,
+    /// Disable the pager even on interactive terminals (`--no-pager`).
+    pub no_pager: bool,
+    /// CLI binary name, used for the `<NAME>_PAGER` env var lookup.
+    pub cli_name: String,
 }
 
 impl Default for PaginationConfig {
@@ -233,6 +346,8 @@ impl Default for PaginationConfig {
             page_delay_ms: 100,
             token_query_param: "pageToken".to_string(),
             token_response_path: "nextPageToken".to_string(),
+            no_pager: false,
+            cli_name: String::new(),
         }
     }
 }
@@ -298,15 +413,16 @@ pub(crate) fn binary_body_is_stdin(binary_body_path: Option<&str>) -> bool {
 pub(crate) fn multipart_has_stdin(parts: &Option<Vec<MultipartPart>>) -> bool {
     match parts {
         Some(parts) => parts.iter().any(|p| match p {
-            MultipartPart::File { path, .. } => {
+            MultipartPart::File { path, .. } => match parse_at_ref(path) {
                 // `\@literal` is an escape, not a stdin sentinel — route it
-                // to the file branch instead. Everything else uses the same
-                // strip-`@` logic as `BinaryBodySource::parse`. FER-10436.
-                if is_escaped_literal(path) {
-                    return false;
-                }
-                strip_or_escape_at(path).as_ref() == "-"
-            }
+                // to the file branch instead. FER-10436.
+                AtRef::Escaped(_) => false,
+                // Only `Auto`-mode `@-` (or bare `-`) is stdin. An explicit
+                // scheme like `@file://-` means a literal file path named `-`.
+                AtRef::File { path, mode: AtMode::Auto } => path.as_ref() == "-",
+                AtRef::File { .. } => false,
+                AtRef::Plain(s) => s == "-",
+            },
             MultipartPart::Text { .. } => false,
         }),
         None => false,
@@ -496,6 +612,7 @@ fn parse_and_validate_inputs(
     is_media_upload: bool,
     base_url_override: Option<&str>,
     extra_headers: &[(String, String)],
+    extra_global_params: &[crate::openapi::app::ResolvedGlobalParam],
 ) -> Result<ExecutionInput, CliError> {
     let params: Map<String, Value> = if let Some(p) = params_json {
         serde_json::from_str(p)
@@ -518,11 +635,24 @@ fn parse_and_validate_inputs(
         }
     };
 
+    // Declared parameters whose value will be supplied by a resolved
+    // global parameter (targeting the same wire name). These are exempt
+    // from the required-param checks below: their value is injected after
+    // validation (see the `extra_global_params` loop), and a required
+    // global without a resolved value already errored in
+    // `build_global_parameter_overrides`. Without this exemption a
+    // `location: path` global (whose OpenAPI target must be declared as a
+    // required path variable) would always trip the check before its
+    // value is ever applied.
+    let global_param_targets: std::collections::HashSet<&str> =
+        extra_global_params.iter().map(|gp| gp.target.as_str()).collect();
+
     for param_name in &method.parameter_order {
         if let Some(param_def) = method.parameters.get(param_name) {
             if param_def.required
                 && param_def.location.as_deref() == Some("path")
                 && !params.contains_key(param_name)
+                && !global_param_targets.contains(param_name.as_str())
             {
                 let hint = missing_param_hint(param_def, param_name);
                 return Err(CliError::Validation(format!(
@@ -533,7 +663,10 @@ fn parse_and_validate_inputs(
     }
 
     for (param_name, param_def) in &method.parameters {
-        if param_def.required && !params.contains_key(param_name) {
+        if param_def.required
+            && !params.contains_key(param_name)
+            && !global_param_targets.contains(param_name.as_str())
+        {
             // When --json is provided, body-located required params are satisfied
             // by the JSON payload — skip their individual-flag validation.
             if param_def.location.as_deref() == Some("body") && body_json.is_some() {
@@ -580,9 +713,11 @@ fn parse_and_validate_inputs(
             }
             Some("body") => {
                 raw_body_flag_keys.push(key.clone());
+                let param_def = method.parameters.get(key);
                 let coerced = coerce_body_param_value(
                     value,
-                    method.parameters.get(key).and_then(|p| p.param_type.as_deref()),
+                    param_def.and_then(|p| p.param_type.as_deref()),
+                    param_def.is_some_and(|p| p.nullable),
                 )?;
                 set_nested_value(&mut body_from_flags, key, coerced);
             }
@@ -636,18 +771,74 @@ fn parse_and_validate_inputs(
         }
     }
 
+    // Inject resolved `x-fern-global-parameters` by location. Header
+    // and body params are stamped here; query and path params are added
+    // to `non_header_params` so `build_url` handles them.
+    for gp in extra_global_params {
+        use crate::openapi::discovery::GlobalParameterLocation;
+        match gp.location {
+            GlobalParameterLocation::Header => {
+                if !header_params.iter().any(|(k, _)| k.eq_ignore_ascii_case(&gp.target)) {
+                    header_params.push((gp.target.clone(), gp.value.clone()));
+                }
+            }
+            GlobalParameterLocation::Query => {
+                if !non_header_params.contains_key(&gp.target) {
+                    non_header_params.insert(
+                        gp.target.clone(),
+                        Value::String(gp.value.clone()),
+                    );
+                }
+            }
+            GlobalParameterLocation::Body => {
+                // Body injection is deferred until after body assembly
+                // so that global body params are merged into both the
+                // `--json` path and the per-field-flags path.
+            }
+            GlobalParameterLocation::Path => {
+                if !non_header_params.contains_key(&gp.target) {
+                    non_header_params.insert(
+                        gp.target.clone(),
+                        Value::String(gp.value.clone()),
+                    );
+                }
+            }
+        }
+    }
+
     // The conflict checks above guarantee that `body_json` and
-    // `body_from_flags` are never both populated, so the body is sourced
-    // from exactly one channel here.
+    // `body_from_flags` are never both populated (before global-param
+    // injection), so the body is sourced from exactly one channel here.
     let body: Option<Value> = if let Some(b) = body_json {
-        let json_val: Value = serde_json::from_str(b)
+        let mut json_val: Value = serde_json::from_str(b)
             .map_err(|e| CliError::Validation(format!("Invalid --json body: {e}")))?;
+        // Resolve `@file` references inside `--json` bodies, matching the
+        // behavior of per-field object-shorthand flags (FER-10436).
+        //
+        // Called directly (no `block_in_place`) because this sync function
+        // is reached from two async contexts:
+        //   a) binding.rs dispatch → `execute_method().await`
+        //   b) app.rs custom-command → `block_in_place` → `block_on` →
+        //      `execute_method`
+        // Wrapping in `block_in_place` here would create a nested
+        // `block_in_place → block_on → block_in_place` chain in path (b).
+        // The file reads are brief, and for a CLI tool the momentary
+        // blocking of a single worker thread is acceptable.
+        resolve_file_refs(&mut json_val)?;
         Some(json_val)
     } else if !body_from_flags.is_empty() {
         Some(Value::Object(body_from_flags))
     } else {
         None
     };
+
+    // Merge body-location global parameters into the assembled body.
+    // This runs after body assembly so globals are injected into both
+    // the `--json` and per-field-flags paths. A value the user already
+    // supplied at the target path — including a nested path like
+    // `config.currency` — is never overwritten (per-op wins, enforced by
+    // `set_nested_value_if_absent`, which walks the dotted path).
+    let body = merge_global_body_params(body, extra_global_params);
 
     // Validate the assembled body against the request schema regardless of
     // how it was built (per-field flags, `--json`, or both). The previous
@@ -677,9 +868,13 @@ fn parse_and_validate_inputs(
 /// Build the per-operation auth metadata from the lowered security
 /// requirements. Computed once per execute_method call and reused across
 /// pagination iterations — the requirements don't change page to page.
-fn endpoint_metadata_for(method: &RestMethod) -> EndpointAuthMetadata {
+fn endpoint_metadata_for(
+    method: &RestMethod,
+    base_url_override: Option<&str>,
+) -> EndpointAuthMetadata {
     EndpointAuthMetadata {
         security_requirements: method.security_requirements.clone(),
+        base_url_override: base_url_override.map(str::to_string),
     }
 }
 
@@ -888,7 +1083,7 @@ async fn build_http_request(
             })?;
             request = request.header("Content-Type", &binary.content_type);
             match BinaryBodySource::parse(raw) {
-                BinaryBodySource::File(path) => {
+                BinaryBodySource::File { path, mode: AtMode::Auto } => {
                     let path_ref: &str = path.as_ref();
                     let file_meta = tokio::fs::metadata(path_ref).await.map_err(|e| {
                         CliError::Validation(format!(
@@ -900,6 +1095,29 @@ async fn build_http_request(
                         build_binary_file_stream(path_ref, file_meta.len(), &binary.flag_name);
                     request = request.header("Content-Length", content_length);
                     request = request.body(body);
+                }
+                BinaryBodySource::File { path, mode } => {
+                    // `Text` / `Data` modes (FER-10532) need the full bytes in
+                    // memory to validate UTF-8 or to base64-encode — there is
+                    // no streaming form of either transform. The transformed
+                    // body becomes a sized in-memory buffer.
+                    let path_ref: &str = path.as_ref();
+                    let bytes = tokio::fs::read(path_ref).await.map_err(|e| {
+                        CliError::Validation(format!(
+                            "Failed to read --{} '{path_ref}': {e}",
+                            binary.flag_name
+                        ))
+                    })?;
+                    let body_bytes = encode_file_bytes_for_text(
+                        bytes,
+                        mode,
+                        &format!("--{}", binary.flag_name),
+                        path_ref,
+                    )?
+                    .into_bytes();
+                    let content_length = body_bytes.len() as u64;
+                    request = request.header("Content-Length", content_length);
+                    request = request.body(reqwest::Body::from(body_bytes));
                 }
                 BinaryBodySource::Stdin => {
                     // No Content-Length — reqwest emits Transfer-Encoding: chunked.
@@ -1090,6 +1308,7 @@ async fn handle_json_response(
     return_path: Option<&str>,
     no_extract: bool,
     method_descriptor: &str,
+    pager: &mut Option<crate::pager::PagerHandle>,
 ) -> Result<bool, CliError> {
     if let Ok(json_val) = serde_json::from_str::<Value>(body_text) {
         let output_val =
@@ -1107,10 +1326,16 @@ async fn handle_json_response(
             captured.push(output_val);
         } else if pagination.page_all {
             let is_first_page = *pages_fetched == 1;
-            let mut out = std::io::stdout().lock();
-            pipeline
-                .emit(&mut out, &output_val, true, is_first_page)
-                .context("Failed to write output")?;
+            if let Some(ref mut pager_handle) = pager {
+                pipeline
+                    .emit(pager_handle, &output_val, true, is_first_page)
+                    .context("Failed to write output")?;
+            } else {
+                let mut out = std::io::stdout().lock();
+                pipeline
+                    .emit(&mut out, &output_val, true, is_first_page)
+                    .context("Failed to write output")?;
+            }
         } else {
             let mut out = std::io::stdout().lock();
             pipeline
@@ -1179,8 +1404,32 @@ async fn handle_json_response(
                 Some(EndpointPagination::Uri { next_uri, .. }) => {
                     match get_nested_str(&json_val, next_uri) {
                         Some(url) if !url.is_empty() => {
-                            *page_state = PageState::NextUrl(Some(url.to_string()));
-                            true
+                            // The response chooses the next request's URL, so it
+                            // must not be able to steer it off-host and take the
+                            // credential with it.
+                            let base = page_state
+                                .url_override()
+                                .unwrap_or(request_url)
+                                .to_string();
+                            match crate::http::check_pagination_target(
+                                &pagination.cli_name,
+                                &base,
+                                url,
+                            ) {
+                                Ok(()) => {
+                                    *page_state = PageState::NextUrl(Some(url.to_string()));
+                                    true
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        next_uri = %url,
+                                        base_url = %base,
+                                        error = %e,
+                                        "refusing x-fern-pagination next_uri; halting pagination"
+                                    );
+                                    false
+                                }
+                            }
                         }
                         _ => false,
                     }
@@ -1195,7 +1444,19 @@ async fn handle_json_response(
                                 .url_override()
                                 .unwrap_or(request_url)
                                 .to_string();
-                            match resolve_next_path(&base, path) {
+                            match resolve_next_path(&base, path).and_then(|resolved| {
+                                // `next_path` may be an absolute URL, which
+                                // replaces the base's origin — so the resolved
+                                // target needs the same host check as the `Uri`
+                                // variant. Checked after resolution so a relative
+                                // path is judged on what it actually resolves to.
+                                crate::http::check_pagination_target(
+                                    &pagination.cli_name,
+                                    &base,
+                                    &resolved,
+                                )
+                                .map(|()| resolved)
+                            }) {
                                 Ok(resolved) => {
                                     *page_state = PageState::NextUrl(Some(resolved));
                                     true
@@ -1521,6 +1782,11 @@ fn project_stream_event(
 /// Stream the response body line-by-line, emitting one formatted event
 /// per dispatched payload to stdout. Stops at the configured
 /// terminator (when the spec declared one) or at end-of-body.
+///
+/// When a `--query` expression is set on the pipeline, each event is
+/// projected through the JMESPath expression before formatting. Events
+/// whose projection evaluates to `null` are suppressed, enabling
+/// `--query` as a per-event streaming filter.
 async fn stream_response(
     response: reqwest::Response,
     streaming: &StreamingConfig,
@@ -1537,10 +1803,21 @@ async fn stream_response(
             no_extract,
             method_descriptor,
         )?;
-        let mut out = std::io::stdout().lock();
-        pipeline
-            .emit(&mut out, &value, false, true)
-            .context("Failed to write output")?;
+        // When no --query is set, skip the clone + projection entirely.
+        if pipeline.query.is_none() {
+            let mut out = std::io::stdout().lock();
+            pipeline
+                .emit_raw(&mut out, &value, false, true)
+                .context("Failed to write output")?;
+        } else if let Some(projected) = pipeline
+            .apply_query_streaming(&value)
+            .context("--query evaluation failed")?
+        {
+            let mut out = std::io::stdout().lock();
+            pipeline
+                .emit_raw(&mut out, &projected, false, true)
+                .context("Failed to write output")?;
+        }
         Ok(())
     })
     .await
@@ -1730,7 +2007,9 @@ pub async fn execute_method(
     no_extract: bool,
     no_retry: bool,
     no_stream: bool,
+    debug: bool,
     extra_headers: &[(String, String)],
+    extra_global_params: &[crate::openapi::app::ResolvedGlobalParam],
 ) -> Result<Option<Value>, CliError> {
     let binary_flag = method
         .binary_request_body
@@ -1749,7 +2028,7 @@ pub async fn execute_method(
         )));
     }
 
-    let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload.is_some(), base_url_override, extra_headers)?;
+    let input = parse_and_validate_inputs(doc, method, params_json, body_json, upload.is_some(), base_url_override, extra_headers, extra_global_params)?;
 
     // Human-readable identifier for the operation, used in
     // `x-fern-sdk-return-value` extraction errors so the user can find
@@ -1771,12 +2050,31 @@ pub async fn execute_method(
         } else {
             ""
         };
+        // `--dry-run` prints the request it *would* send, so it must redact
+        // credentials for the same reason `--debug` does. A credential reaches
+        // `header_params` whenever the spec models it as a header parameter or
+        // an `x-fern-global-headers` entry (an `apiKey`-in-header scheme is the
+        // common case), and dry-run output is routinely pasted into issues.
+        // Same predicate and spec-derived names as the debug dump, so the two
+        // can't drift apart.
+        let sensitive_header_names = spec_sensitive_header_names(doc);
+        let redacted_headers: Vec<(String, String)> = input
+            .header_params
+            .iter()
+            .map(|(name, value)| {
+                if crate::debug::is_sensitive_header(name, &sensitive_header_names) {
+                    (name.clone(), "[REDACTED]".to_string())
+                } else {
+                    (name.clone(), value.clone())
+                }
+            })
+            .collect();
         let mut dry_run_info = json!({
             "dry_run": true,
             "url": input.full_url,
             "method": method.http_method,
             "query_params": input.query_params,
-            "headers": input.header_params,
+            "headers": redacted_headers,
             "body": input.body,
             "is_multipart_upload": input.is_upload,
         });
@@ -1795,8 +2093,16 @@ pub async fn execute_method(
                 .map(|b| (b.content_type.as_str(), b.flag_name.as_str()))
                 .unwrap_or(("", ""));
             let (source, transfer) = match BinaryBodySource::parse(raw) {
-                BinaryBodySource::File(p) => {
-                    (json!({ "file": p.as_ref() }), "content-length")
+                BinaryBodySource::File { path, mode } => {
+                    let mode_str = match mode {
+                        AtMode::Auto => "auto",
+                        AtMode::Text => "text",
+                        AtMode::Data => "data",
+                    };
+                    (
+                        json!({ "file": path.as_ref(), "mode": mode_str }),
+                        "content-length",
+                    )
                 }
                 BinaryBodySource::Stdin => (json!({ "stdin": true }), "chunked"),
             };
@@ -1843,7 +2149,58 @@ pub async fn execute_method(
     let mut page_state: PageState = PageState::initial(endpoint_pag);
     let mut pages_fetched: u32 = 0;
     let mut captured_values = Vec::new();
-    let auth_metadata = endpoint_metadata_for(method);
+    let auth_metadata = endpoint_metadata_for(method, base_url_override);
+
+    // Spawn an external pager when --page-all is active on a TTY.
+    let fallback_label = format!(
+        "{} {}",
+        method.http_method.to_ascii_uppercase(),
+        method.path
+    );
+    let pager_label = method.id.as_deref().unwrap_or(&fallback_label);
+    let mut pager_handle = if pagination.page_all && !pagination.no_pager && !capture_output {
+        let pager_config = crate::pager::PagerConfig::from_env(&pagination.cli_name);
+        crate::pager::spawn_pager(&pager_config, pager_label)
+    } else {
+        None
+    };
+
+    // Derive spec-declared sensitive names for the debug dump.
+    let additional_sensitive_headers: Vec<&str> = if debug {
+        spec_sensitive_header_names(doc)
+    } else {
+        Vec::new()
+    };
+    let additional_sensitive_query_params: Vec<&str> = if debug {
+        doc.security_schemes
+            .values()
+            .filter_map(|s| {
+                if let crate::openapi::discovery::SecurityScheme::ApiKeyQuery { name } = s {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Pre-compute the body string for the debug request dump. This is
+    // computed once here because the body doesn't change across retries.
+    let body_str_for_dump: Option<String> = if debug
+        && binary_body_path.is_none()
+        && !input.is_upload
+        && multipart_parts.is_none()
+    {
+        if method.body_encoding.is_form() {
+            input.body.as_ref().map(encode_form_body)
+        } else {
+            input.body.as_ref().map(|v| v.to_string())
+        }
+    } else {
+        None
+    };
 
     // Build the client once outside the pagination loop. Client construction
     // reads env vars and (with TLS) builds a connection pool; rebuilding per
@@ -1883,24 +2240,54 @@ pub async fn execute_method(
                 Some(method.retries.as_ref().unwrap_or(&default_retries))
             };
 
-        // Auto Idempotency-Key: generate once before the retry loop so
-        // the same key is sent on every attempt. Only for POST/PUT/PATCH
-        // unless opted out via `x-fern-cli-idempotency: false`, or when
-        // the operation already has an explicit idempotency-header
-        // mechanism (x-fern-idempotent: true provides --idempotency-key).
-        let user_provides_idempotency = method.idempotent
-            || input
-                .header_params
-                .iter()
-                .any(|(k, _)| k.eq_ignore_ascii_case("idempotency-key"));
+        // Auto Idempotency-Key: generate once before the retry loop so the
+        // same key is sent on every attempt. Only for POST/PUT/PATCH, and
+        // only when the caller didn't already supply one, unless opted out
+        // via `x-fern-cli-idempotency: false`.
+        //
+        // The suppression condition deliberately does NOT include
+        // `method.idempotent`. `x-fern-idempotent: true` only means the
+        // operation *exposes* `--idempotency-key` — it is not a promise that
+        // the user passed it. Treating the marker as "the caller provides a
+        // key" inverted the safety property it exists for: the marker also
+        // makes the operation retry-eligible (`method_allows_retry`), so a
+        // marked POST that the user invoked without the flag retried with no
+        // key at all, while the same POST *without* the marker got an
+        // auto-generated key. A 5xx on a marked send could therefore deliver
+        // twice. Only a key actually present on this invocation suppresses
+        // generation.
+        let user_supplied_key = input
+            .header_params
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("idempotency-key"));
         let idempotency_key = if !method.no_auto_idempotency_key
-            && !user_provides_idempotency
+            && !user_supplied_key
             && crate::http::needs_idempotency_key(&method.http_method)
         {
             Some(crate::http::generate_idempotency_key())
         } else {
             None
         };
+
+        // Retry-safety for POST/PATCH requires a key the *server* is known to
+        // honor, which a key we invented does not establish. This used to read
+        // `method.idempotent || idempotency_key.is_some()`, and since the auto
+        // key is generated for every POST/PUT/PATCH, that made every
+        // non-idempotent operation retry-eligible — a 5xx on a create retried
+        // ~4x against an endpoint with no idempotency support at all and could
+        // duplicate the resource.
+        //
+        // Two things do establish it:
+        //   * `x-fern-idempotent: true` — the spec declares the operation
+        //     supports an idempotency key, and the block above now guarantees
+        //     one is actually sent;
+        //   * an explicit `--idempotency-key` — the caller asserting the
+        //     server dedupes on it. This also removes the surprise that
+        //     supplying a key made the CLI *less* willing to retry.
+        //
+        // An auto-generated key is still sent (it is what makes a retry safe
+        // on an endpoint that does consume it) but no longer licenses one.
+        let retry_safe = method.idempotent || user_supplied_key;
 
         let mut retry_attempt: u32 = 0;
         let response = loop {
@@ -1923,7 +2310,28 @@ pub async fn execute_method(
                 request = request.header("Idempotency-Key", key.as_str());
             }
 
-            match request.send().await {
+            let built = request.build().map_err(|e| {
+                // `Validation`, not `Other`: `build()` fails on a malformed URL
+                // or header value, which comes from `--base-url` or a flag the
+                // user typed. Reporting it as `code: 500` claimed a server
+                // status for a request that was never sent, and buried a
+                // fixable input error under an internal-error exit code.
+                CliError::Validation(format!(
+                    "Failed to build HTTP request: {}",
+                    crate::error::error_chain(&e)
+                ))
+            })?;
+            if debug {
+                crate::debug::dump_request(
+                    built.method().as_str(),
+                    built.url().as_str(),
+                    built.headers(),
+                    body_str_for_dump.as_deref(),
+                    &additional_sensitive_headers,
+                    &additional_sensitive_query_params,
+                );
+            }
+            match client.execute(built).await {
                 Ok(resp) => {
                     let status = resp.status();
                     let retry_after_header = resp
@@ -1941,7 +2349,7 @@ pub async fn execute_method(
                             &outcome,
                             cfg,
                             &method.http_method,
-                            method.idempotent || idempotency_key.is_some(),
+                            retry_safe,
                             no_retry,
                         ) {
                             tracing::warn!(
@@ -1966,6 +2374,12 @@ pub async fn execute_method(
                     break resp;
                 }
                 Err(e) => {
+                    // A refused redirect is a policy decision, not a transport
+                    // blip: retrying re-issues a request that will be refused
+                    // identically. Classify and return before `decide_retry`.
+                    if let Some(err) = crate::http::redirect_refusal_error(&e) {
+                        return Err(err);
+                    }
                     if let Some(cfg) = retries_cfg {
                         let outcome = RetryOutcome {
                             status: None,
@@ -1976,7 +2390,7 @@ pub async fn execute_method(
                             &outcome,
                             cfg,
                             &method.http_method,
-                            method.idempotent || idempotency_key.is_some(),
+                            retry_safe,
                             no_retry,
                         ) {
                             tracing::warn!(
@@ -1997,7 +2411,14 @@ pub async fn execute_method(
                     // behind corporate proxies / interception tools. The hint is
                     // a side effect; the error then propagates up like any other.
                     crate::http::maybe_emit_tls_hint(http_config, &e);
-                    return Err(anyhow::Error::from(e).context("HTTP request failed").into());
+                    // `Network`, not `Other`: nothing answered, so there is no
+                    // HTTP status to put in `error.code`. The chain is walked
+                    // because reqwest's own Display stops at "error sending
+                    // request" — "Connection refused" is the actionable part.
+                    return Err(CliError::Network(format!(
+                        "HTTP request failed: {}",
+                        crate::error::error_chain(&e)
+                    )));
                 }
             }
         };
@@ -2012,7 +2433,6 @@ pub async fn execute_method(
             .to_string();
 
         if !status.is_success() {
-            let error_body = response.text().await.unwrap_or_default();
             tracing::warn!(
                 api_method = method_id,
                 http_method = %method.http_method,
@@ -2020,6 +2440,44 @@ pub async fn execute_method(
                 latency_ms = latency_ms,
                 "API error"
             );
+            // Raw mode: emit error body verbatim, return sentinel.
+            if pipeline.is_raw() && !capture_output {
+                if !pipeline.quiet {
+                    let bytes = response.bytes().await.unwrap_or_default();
+                    let mut stdout = std::io::stdout().lock();
+                    let _ = std::io::Write::write_all(&mut stdout, &bytes);
+                    let _ = std::io::Write::flush(&mut stdout);
+                }
+                return Err(CliError::RawSentinel {
+                    code: status.as_u16(),
+                });
+            }
+            // HTTP mode: emit status line + headers + body, return sentinel.
+            if pipeline.is_http() && !capture_output {
+                if !pipeline.quiet {
+                    let version = response.version();
+                    let resp_headers = response.headers().clone();
+                    let bytes = response.bytes().await.unwrap_or_default();
+                    let mut stdout = std::io::stdout().lock();
+                    let _ = write_http_preamble(&mut stdout, version, status, &resp_headers);
+                    let _ = std::io::Write::write_all(&mut stdout, &bytes);
+                    let _ = std::io::Write::flush(&mut stdout);
+                }
+                return Err(CliError::RawSentinel {
+                    code: status.as_u16(),
+                });
+            }
+            let response_headers = response.headers().clone();
+            let error_body = response.text().await.unwrap_or_default();
+            if debug {
+                crate::debug::dump_error_response(
+                    status.as_u16(),
+                    latency_ms,
+                    &response_headers,
+                    &error_body,
+                    &additional_sensitive_headers,
+                );
+            }
             return handle_error_response(
                 status,
                 &error_body,
@@ -2038,6 +2496,59 @@ pub async fn execute_method(
             page = pages_fetched,
             "API request"
         );
+
+        // Raw mode: stream response bytes to stdout verbatim.
+        if pipeline.is_raw() && !capture_output {
+            if pipeline.quiet {
+                let _ = response.bytes().await;
+            } else {
+                use std::io::Write;
+                let mut stream = response.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.context("Failed to read response chunk")?;
+                    // StdoutLock is !Send — re-acquire per chunk.
+                    std::io::stdout()
+                        .lock()
+                        .write_all(&chunk)
+                        .context("Failed to write to stdout")?;
+                }
+                std::io::stdout()
+                    .flush()
+                    .context("Failed to flush stdout")?;
+            }
+            break;
+        }
+
+        // HTTP mode: emit status line + headers + raw body.
+        if pipeline.is_http() && !capture_output {
+            if pipeline.quiet {
+                let _ = response.bytes().await;
+            } else {
+                use std::io::Write;
+                let version = response.version();
+                let resp_headers = response.headers().clone();
+                // Write preamble in its own scope so StdoutLock (!Send) is
+                // dropped before the streaming await below.
+                {
+                    let mut stdout = std::io::stdout().lock();
+                    write_http_preamble(&mut stdout, version, status, &resp_headers)
+                        .context("Failed to write HTTP preamble")?;
+                }
+                let mut stream = response.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.context("Failed to read response chunk")?;
+                    // StdoutLock is !Send — re-acquire per chunk.
+                    std::io::stdout()
+                        .lock()
+                        .write_all(&chunk)
+                        .context("Failed to write to stdout")?;
+                }
+                std::io::stdout()
+                    .flush()
+                    .context("Failed to flush stdout")?;
+            }
+            break;
+        }
 
         // Streaming response branch. Selected when:
         // - the operation declares `x-fern-streaming`, AND
@@ -2059,6 +2570,13 @@ pub async fn execute_method(
                 // with `x-fern-pagination`), so the pagination loop
                 // never re-enters; bumping the counter would only
                 // confuse the unrelated request-tracing in `debug!`.
+                if debug {
+                    crate::debug::dump_streaming_note(
+                        status.as_u16(),
+                        response.headers(),
+                        &additional_sensitive_headers,
+                    );
+                }
                 stream_response(
                     response,
                     streaming,
@@ -2096,15 +2614,70 @@ pub async fn execute_method(
             break;
         }
 
+        // SSE auto-detection: when the spec omits `x-fern-streaming` but
+        // the server responds with `text/event-stream`, treat the body as
+        // an SSE stream using the same infrastructure. This avoids falling
+        // through to the binary handler (which would dump the stream to a
+        // file or hang).
+        if content_type.contains("text/event-stream") && method.streaming.is_none() {
+            let sse_config = StreamingConfig::Sse { terminator: None };
+            if !no_stream && !capture_output {
+                if debug {
+                    crate::debug::dump_streaming_note(
+                        status.as_u16(),
+                        response.headers(),
+                        &additional_sensitive_headers,
+                    );
+                }
+                stream_response(
+                    response,
+                    &sse_config,
+                    method.return_value.as_deref(),
+                    no_extract,
+                    pipeline,
+                    &method_descriptor,
+                )
+                .await?;
+                break;
+            }
+            let buffered = buffer_streaming_response(
+                response,
+                &sse_config,
+                method.return_value.as_deref(),
+                no_extract,
+                &method_descriptor,
+            )
+            .await?;
+            if capture_output {
+                captured_values.push(buffered);
+            } else {
+                let mut out = std::io::stdout().lock();
+                pipeline
+                    .emit(&mut out, &buffered, false, true)
+                    .context("Failed to write output")?;
+            }
+            break;
+        }
+
         let is_json =
             content_type.contains("application/json") || content_type.contains("text/json");
 
         if is_json || content_type.is_empty() {
+            let response_headers = response.headers().clone();
             let body_text = response
                 .text()
                 .await
                 .context("Failed to read response body")?;
 
+            if debug {
+                crate::debug::dump_response(
+                    status.as_u16(),
+                    latency_ms,
+                    &response_headers,
+                    &body_text,
+                    &additional_sensitive_headers,
+                );
+            }
             let response_body = body_text;
             let should_continue = handle_json_response(
                 &response_body,
@@ -2120,26 +2693,40 @@ pub async fn execute_method(
                 method.return_value.as_deref(),
                 no_extract,
                 &method_descriptor,
+                &mut pager_handle,
             )
             .await?;
 
             if should_continue {
                 continue;
             }
-        } else if let Some(res) = handle_binary_response(
-            response,
-            &content_type,
-            output_path,
-            pipeline,
-            capture_output,
-        )
-        .await?
-        {
-            captured_values.push(res);
+        } else {
+            let bin_headers = response.headers().clone();
+            if debug {
+                crate::debug::dump_streaming_note(
+                    status.as_u16(),
+                    &bin_headers,
+                    &additional_sensitive_headers,
+                );
+            }
+            if let Some(res) = handle_binary_response(
+                response,
+                &content_type,
+                output_path,
+                pipeline,
+                capture_output,
+            )
+            .await?
+            {
+                captured_values.push(res);
+            }
         }
 
         break;
     }
+
+    // Close the pager pipe and wait for it to exit before returning.
+    drop(pager_handle);
 
     if capture_output && !captured_values.is_empty() {
         if captured_values.len() == 1 {
@@ -2150,6 +2737,43 @@ pub async fn execute_method(
     }
 
     Ok(None)
+}
+
+/// Format an HTTP version enum as a string (e.g. `HTTP/1.1`).
+fn format_http_version(version: reqwest::Version) -> &'static str {
+    match version {
+        reqwest::Version::HTTP_09 => "HTTP/0.9",
+        reqwest::Version::HTTP_10 => "HTTP/1.0",
+        reqwest::Version::HTTP_11 => "HTTP/1.1",
+        reqwest::Version::HTTP_2 => "HTTP/2",
+        reqwest::Version::HTTP_3 => "HTTP/3",
+        _ => "HTTP/1.1",
+    }
+}
+
+/// Write the HTTP status line and headers preamble to `out`.
+///
+/// Produces output like:
+/// ```text
+/// HTTP/1.1 200 OK\r\n
+/// Content-Type: application/json\r\n
+/// \r\n
+/// ```
+fn write_http_preamble(
+    out: &mut dyn std::io::Write,
+    version: reqwest::Version,
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> std::io::Result<()> {
+    let version_str = format_http_version(version);
+    let reason = status.canonical_reason().unwrap_or("");
+    write!(out, "{} {} {}\r\n", version_str, status.as_u16(), reason)?;
+    for (name, value) in headers.iter() {
+        let val_str = value.to_str().unwrap_or("<binary>");
+        write!(out, "{}: {}\r\n", name, val_str)?;
+    }
+    write!(out, "\r\n")?;
+    Ok(())
 }
 
 /// Serialize a query parameter value according to its OpenAPI style.
@@ -2783,12 +3407,7 @@ fn resolve_upload_mime(
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
     // Strip CR/LF and other control characters to prevent MIME header injection.
-    let sanitized: String = raw.chars().filter(|c| !c.is_control()).collect();
-    if sanitized.is_empty() {
-        "application/octet-stream".to_string()
-    } else {
-        sanitized
-    }
+    sanitize_mime(raw)
 }
 
 /// Simple MIME type inference from file extension.
@@ -2815,8 +3434,20 @@ fn mime_from_extension(path: &str) -> Option<String> {
         "ico" => "image/x-icon",
         "mp3" => "audio/mpeg",
         "wav" => "audio/wav",
+        // Speech-to-text and dubbing endpoints take these routinely, and a
+        // server that validates the part's media type rejects an upload
+        // labelled `application/octet-stream`.
+        "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "flac" => "audio/flac",
+        "ogg" | "oga" => "audio/ogg",
+        "opus" => "audio/opus",
+        "aif" | "aiff" => "audio/aiff",
         "mp4" => "video/mp4",
         "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        // Accepted by document-ingestion endpoints (e.g. knowledge bases).
+        "epub" => "application/epub+zip",
         "md" | "markdown" => "text/markdown",
         "yaml" | "yml" => "application/yaml",
         "toml" => "application/toml",
@@ -2937,11 +3568,62 @@ fn build_multipart_stream(
     ))
 }
 
-/// Resolve a file part's `Content-Type`. A per-part value from the OpenAPI
-/// `encoding` object wins; otherwise the OAS default for a binary part,
-/// `application/octet-stream`, applies.
-fn file_part_mime(content_type: Option<&str>) -> &str {
-    content_type.unwrap_or("application/octet-stream")
+/// Header names the spec itself declares as credentials — the `name` of every
+/// `apiKey`-in-header security scheme (`xi-api-key`, `X-API-Key`, …).
+///
+/// Shared by `--debug` and `--dry-run` so a header redacted in one is redacted
+/// in the other. `debug::REDACTED_HEADERS` covers the well-known names; this
+/// covers the ones only the spec knows about.
+pub(crate) fn spec_sensitive_header_names(doc: &RestDescription) -> Vec<&str> {
+    doc.security_schemes
+        .values()
+        .filter_map(|s| {
+            if let crate::openapi::discovery::SecurityScheme::ApiKeyHeader { name } = s {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Resolve a file part's `Content-Type`:
+///
+/// 1. A per-part value from the OpenAPI `encoding` object (explicit wins)
+/// 2. Inference from the file's extension
+/// 3. `application/octet-stream`
+///
+/// Same precedence [`resolve_upload_mime`] already applies to binary request
+/// bodies — this path previously skipped step 2 and labelled *every* upload
+/// `application/octet-stream`. That is the OAS default for a binary part and so
+/// technically conformant, but servers that validate a part's media type reject
+/// it outright: ElevenLabs' knowledge-base upload, for one, answers
+/// `Invalid file type. Allowed types are ['application/pdf', 'text/plain', …]`
+/// for a `.txt` file the CLI mislabelled. Since most specs omit `encoding`
+/// entirely, that made uploads impossible against any strict server.
+///
+/// `file_name` is `None` when the payload is not the file's native bytes —
+/// stdin, or an `@text`/`@data` transform that rewrites the content (a base64
+/// re-encoding of a PNG is not `image/png`). Those keep the octet-stream
+/// default rather than claiming a type the bytes no longer have.
+fn file_part_mime(content_type: Option<&str>, file_name: Option<&str>) -> String {
+    let raw = content_type
+        .map(|s| s.to_string())
+        .or_else(|| file_name.and_then(mime_from_extension))
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    sanitize_mime(raw)
+}
+
+/// Strip control characters from a resolved MIME type to prevent header
+/// injection via user-controlled paths or spec metadata, falling back to
+/// `application/octet-stream` if nothing survives.
+fn sanitize_mime(raw: String) -> String {
+    let sanitized: String = raw.chars().filter(|c| !c.is_control()).collect();
+    if sanitized.is_empty() {
+        "application/octet-stream".to_string()
+    } else {
+        sanitized
+    }
 }
 
 /// Build a `reqwest::multipart::Form` from the collected CLI flag values.
@@ -2997,10 +3679,22 @@ async fn build_multipart_form(
                     form = form.part(name.clone(), literal_part);
                     continue;
                 }
-                let mime = file_part_mime(content_type.as_deref());
-                let stripped = strip_or_escape_at(path);
-                let stripped_ref: &str = stripped.as_ref();
-                let (bytes, file_name) = if stripped_ref == "-" {
+                // Parse the raw stored path so we know which encoding the
+                // user asked for (`Auto` → raw bytes, `Text` → UTF-8 only,
+                // `Data` → always base64 — FER-10532). Stdin (`@-` / `-`)
+                // is only reachable through `Auto`.
+                let (inner_path, mode) = match parse_at_ref(path) {
+                    AtRef::File { path: p, mode } => (p, mode),
+                    AtRef::Plain(s) => (Cow::Borrowed(s), AtMode::Auto),
+                    // `\@literal` was handled above; reachable only for a
+                    // defensively-constructed File part. Fall back to the
+                    // FER-10436 contract: open a file whose name is the
+                    // literal `@<rest>`.
+                    AtRef::Escaped(literal) => (Cow::Owned(literal), AtMode::Auto),
+                };
+                let inner_ref: &str = inner_path.as_ref();
+                let is_stdin = mode == AtMode::Auto && inner_ref == "-";
+                let (bytes, file_name) = if is_stdin {
                     let mut buf = Vec::new();
                     tokio::io::AsyncReadExt::read_to_end(&mut tokio::io::stdin(), &mut buf)
                         .await
@@ -3011,21 +3705,44 @@ async fn build_multipart_form(
                         })?;
                     (buf, "stdin".to_string())
                 } else {
-                    let file_bytes = tokio::fs::read(stripped_ref).await.map_err(|e| {
+                    let file_bytes = tokio::fs::read(inner_ref).await.map_err(|e| {
                         CliError::Validation(format!(
-                            "Failed to read file '{stripped_ref}' for multipart field '{name}': {e}"
+                            "Failed to read file '{inner_ref}' for multipart field '{name}': {e}"
                         ))
                     })?;
-                    let file_name = std::path::Path::new(stripped_ref)
+                    let file_name = std::path::Path::new(inner_ref)
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("upload")
                         .to_string();
                     (file_bytes, file_name)
                 };
-                let file_part = reqwest::multipart::Part::bytes(bytes)
+                // Apply the FER-10532 mode transform when the user asked
+                // for one. `Auto` and stdin keep their raw-byte path.
+                let part_bytes: Vec<u8> = match mode {
+                    AtMode::Auto => bytes,
+                    AtMode::Text | AtMode::Data => encode_file_bytes_for_text(
+                        bytes,
+                        mode,
+                        &format!("multipart field '{name}'"),
+                        inner_ref,
+                    )?
+                    .into_bytes(),
+                };
+                // Resolved here, not before the read: inferring the media type
+                // from the extension needs the resolved file name, and only the
+                // untransformed `Auto` path still carries the file's own bytes.
+                let mime = file_part_mime(
+                    content_type.as_deref(),
+                    if mode == AtMode::Auto && !is_stdin {
+                        Some(file_name.as_str())
+                    } else {
+                        None
+                    },
+                );
+                let file_part = reqwest::multipart::Part::bytes(part_bytes)
                     .file_name(file_name)
-                    .mime_str(mime)
+                    .mime_str(&mime)
                     .map_err(|e| {
                         CliError::Validation(format!(
                             "Invalid Content-Type '{mime}' for multipart field '{name}': {e}"
@@ -3112,6 +3829,53 @@ fn build_multipart_body(
     Ok((body, content_type))
 }
 
+/// Merge body-location global parameters into an assembled body value.
+/// Handles both the `--json` and per-field-flags body paths. Non-object
+/// bodies (arrays, scalars) are left untouched since we can't inject
+/// named fields into them. When the body is `None`, a new object is
+/// created to carry the global fields.
+fn merge_global_body_params(
+    body: Option<Value>,
+    extra_global_params: &[crate::openapi::app::ResolvedGlobalParam],
+) -> Option<Value> {
+    use crate::openapi::discovery::GlobalParameterLocation;
+
+    let has_body_globals = extra_global_params
+        .iter()
+        .any(|gp| gp.location == GlobalParameterLocation::Body);
+    if !has_body_globals {
+        return body;
+    }
+
+    match body {
+        Some(Value::Object(mut m)) => {
+            for gp in extra_global_params
+                .iter()
+                .filter(|gp| gp.location == GlobalParameterLocation::Body)
+            {
+                // Per-op wins: only inject where the user hasn't already
+                // supplied a value at the (possibly nested) target path.
+                set_nested_value_if_absent(&mut m, &gp.target, Value::String(gp.value.clone()));
+            }
+            Some(Value::Object(m))
+        }
+        Some(other) => {
+            // Non-object body — can't inject named fields; leave as-is.
+            Some(other)
+        }
+        None => {
+            let mut m = Map::new();
+            for gp in extra_global_params
+                .iter()
+                .filter(|gp| gp.location == GlobalParameterLocation::Body)
+            {
+                set_nested_value_if_absent(&mut m, &gp.target, Value::String(gp.value.clone()));
+            }
+            Some(Value::Object(m))
+        }
+    }
+}
+
 /// Intentional duplication from `graphql/executor.rs` — no shared module by design.
 fn set_nested_value(obj: &mut Map<String, Value>, path: &str, value: Value) {
     match path.split_once('.') {
@@ -3124,6 +3888,30 @@ fn set_nested_value(obj: &mut Map<String, Value>, path: &str, value: Value) {
                 .or_insert_with(|| Value::Object(Map::new()));
             if let Value::Object(nested_map) = nested {
                 set_nested_value(nested_map, tail, value);
+            }
+        }
+    }
+}
+
+/// Like [`set_nested_value`] but never overwrites a value the user has
+/// already supplied: it no-ops on an existing leaf and never replaces a
+/// non-object node encountered while walking a dotted path. This is what
+/// enforces "per-op wins" for body-location global parameters — a flat
+/// `contains_key(target)` check can't see a nested target like
+/// `config.currency` (the assembled body has no top-level key literally
+/// named `"config.currency"`), so the presence test must walk the path.
+fn set_nested_value_if_absent(obj: &mut Map<String, Value>, path: &str, value: Value) {
+    match path.split_once('.') {
+        None => {
+            obj.entry(path.to_string()).or_insert(value);
+        }
+        Some((head, tail)) => {
+            let nested = obj
+                .entry(head.to_string())
+                .or_insert_with(|| Value::Object(Map::new()));
+            // If the user already put a non-object here, leave it untouched.
+            if let Value::Object(nested_map) = nested {
+                set_nested_value_if_absent(nested_map, tail, value);
             }
         }
     }
@@ -3199,7 +3987,17 @@ fn value_to_form_str(val: &Value) -> String {
 /// supplied via `--params` are already typed by `serde_json` and pass through
 /// unchanged. `object` and `array` types are JSON-decoded so callers can pass
 /// nested structures via individual flags (e.g. `--addresses '[{"city":"SF"}]'`).
-fn coerce_body_param_value(value: &Value, param_type: Option<&str>) -> Result<Value, CliError> {
+fn coerce_body_param_value(
+    value: &Value,
+    param_type: Option<&str>,
+    nullable: bool,
+) -> Result<Value, CliError> {
+    // An explicit `null` on a nullable field is the user asking to send
+    // JSON null (ADR-0003's sentinel, resolved in `collect_params_from_flags`),
+    // not a malformed object/array. Pass it through untouched.
+    if nullable && value.is_null() {
+        return Ok(Value::Null);
+    }
     // For object-shorthand body flags, validate shape regardless of whether
     // the value arrives here as a raw String (legacy / direct unit-test entry)
     // or as a pre-decoded Value. `collect_params_from_flags` eagerly
@@ -3280,6 +4078,56 @@ fn validate_body_against_schema(
     Ok(())
 }
 
+/// Maximum `$ref` chain length the validator will follow (`A: {$ref: B}`,
+/// `B: {$ref: C}`). Resolved iteratively rather than recursively so a cyclic
+/// chain fails closed — unlike the value-driven recursion elsewhere in this
+/// module, a ref chain consumes no input and would not terminate on its own.
+const MAX_SCHEMA_REF_CHAIN: u8 = 8;
+
+/// Resolve a component schema name to its terminal schema, following any
+/// chain of bare `$ref` components. Returns `None` when a link is missing or
+/// the chain exceeds [`MAX_SCHEMA_REF_CHAIN`].
+fn resolve_schema_chain<'a>(
+    name: &str,
+    doc: &'a RestDescription,
+) -> Option<&'a crate::openapi::discovery::JsonSchema> {
+    let mut current = doc.schemas.get(name)?;
+    for _ in 0..MAX_SCHEMA_REF_CHAIN {
+        match current.schema_ref.as_deref() {
+            Some(next) => current = doc.schemas.get(next)?,
+            None => return Some(current),
+        }
+    }
+    tracing::warn!("$ref chain for '{name}' exceeded {MAX_SCHEMA_REF_CHAIN} levels; likely cyclic");
+    None
+}
+
+/// Check `value` against a JSON-Schema `type` keyword, pushing a diagnostic
+/// and returning `false` on mismatch.
+///
+/// Shared by [`validate_property`] (inline-typed properties) and
+/// [`validate_value`] (`$ref`-resolved components) so the two cannot drift —
+/// they did, and the component path had no type check at all.
+fn check_json_type(value: &Value, expected_type: &str, path: &str, errors: &mut Vec<String>) -> bool {
+    let matches = match (expected_type, value) {
+        ("string", Value::String(_)) => true,
+        ("integer", Value::Number(n)) => n.is_i64() || n.is_u64(),
+        ("number", Value::Number(_)) => true,
+        ("boolean", Value::Bool(_)) => true,
+        ("array", Value::Array(_)) => true,
+        ("object", Value::Object(_)) => true,
+        ("any", _) => true,
+        _ => false,
+    };
+    if !matches {
+        errors.push(format!(
+            "{path}: Expected type '{expected_type}', found {}",
+            get_value_type(value)
+        ));
+    }
+    matches
+}
+
 fn validate_value(
     value: &Value,
     schema_ref_name: &str,
@@ -3287,7 +4135,7 @@ fn validate_value(
     path: &str,
     errors: &mut Vec<String>,
 ) {
-    let schema = match doc.schemas.get(schema_ref_name) {
+    let schema = match resolve_schema_chain(schema_ref_name, doc) {
         Some(s) => s,
         None => {
             errors.push(format!("{path}: Schema '{schema_ref_name}' not found"));
@@ -3325,6 +4173,29 @@ fn validate_value(
             }
         } else {
             errors.push(format!("{path}: Expected object"));
+        }
+        return;
+    }
+
+    // Non-object component — `Username: {type: string}`,
+    // `Labels: {type: array, items: {type: string}}`. These used to fall off
+    // the end of this function entirely, so *every* `$ref`-typed property and
+    // parameter was accepted whatever its value: `--dry-run` exited 0 on a
+    // body whose fields were all the wrong type, which reads as confirmation
+    // to an agent. Only inline-typed properties were ever checked.
+    let Some(expected_type) = schema.schema_type.as_deref() else {
+        // No `type` keyword, no properties, no `allOf` — a free-form or
+        // pure-union component. Nothing to assert.
+        return;
+    };
+    if !check_json_type(value, expected_type, path, errors) {
+        return;
+    }
+    if expected_type == "array" {
+        if let (Some(items), Value::Array(arr)) = (&schema.items, value) {
+            for (index, item) in arr.iter().enumerate() {
+                validate_property(item, items, doc, &format!("{path}[{index}]"), errors);
+            }
         }
     }
 }
@@ -3533,23 +4404,9 @@ fn validate_property(
 
     // 2. Type checking
     if let Some(expected_type) = &prop_schema.prop_type {
-        let type_matches = match (expected_type.as_str(), value) {
-            ("string", Value::String(_)) => true,
-            ("integer", Value::Number(n)) => n.is_i64() || n.is_u64(),
-            ("number", Value::Number(_)) => true,
-            ("boolean", Value::Bool(_)) => true,
-            ("array", Value::Array(_)) => true,
-            ("object", Value::Object(_)) => true,
-            ("any", _) => true,
-            _ => false,
-        };
-
-        if !type_matches {
-            errors.push(format!(
-                "{path}: Expected type '{expected_type}', found {}",
-                get_value_type(value)
-            ));
-            return; // Stop further validation for this property if the type is wrong
+        if !check_json_type(value, expected_type, path, errors) {
+            // Stop further validation for this property if the type is wrong.
+            return;
         }
     }
 
@@ -4119,15 +4976,82 @@ mod tests {
         ])));
         // No multipart parts at all.
         assert!(!multipart_has_stdin(&None));
+
+        // FER-10532: explicit-scheme `-` is a literal filename, NOT stdin.
+        // `@file://-` and `@data://-` both fail the stdin check so retries
+        // stay enabled (the file read is replayable, unlike a pipe).
+        assert!(!multipart_has_stdin(&Some(vec![MultipartPart::File {
+            name: "file".into(),
+            path: "@file://-".into(),
+            content_type: None,
+        }])));
+        assert!(!multipart_has_stdin(&Some(vec![MultipartPart::File {
+            name: "file".into(),
+            path: "@data://-".into(),
+            content_type: None,
+        }])));
+        // FER-10532: explicit-scheme path that happens to be `-` somewhere
+        // else (e.g. `@file://./-.bin`) is also a real path.
+        assert!(!multipart_has_stdin(&Some(vec![MultipartPart::File {
+            name: "file".into(),
+            path: "@file:///tmp/audio.txt".into(),
+            content_type: None,
+        }])));
+        // FER-10436: `\@-` is the escape — literal value `@-`, not stdin.
+        assert!(!multipart_has_stdin(&Some(vec![MultipartPart::File {
+            name: "file".into(),
+            path: "\\@-".into(),
+            content_type: None,
+        }])));
     }
 
     #[test]
     fn test_file_part_mime_defaults_and_override() {
-        // No per-part content type → OAS binary default.
-        assert_eq!(file_part_mime(None), "application/octet-stream");
-        // An encoding-supplied content type wins.
-        assert_eq!(file_part_mime(Some("image/png")), "image/png");
-        assert_eq!(file_part_mime(Some("text/plain")), "text/plain");
+        // Neither an encoding entry nor a usable file name → OAS binary default.
+        assert_eq!(file_part_mime(None, None), "application/octet-stream");
+        // An encoding-supplied content type wins, even over the extension.
+        assert_eq!(file_part_mime(Some("image/png"), None), "image/png");
+        assert_eq!(file_part_mime(Some("text/plain"), None), "text/plain");
+        assert_eq!(
+            file_part_mime(Some("application/pdf"), Some("notes.txt")),
+            "application/pdf"
+        );
+    }
+
+    #[test]
+    fn test_file_part_mime_infers_from_extension_when_spec_is_silent() {
+        // Most specs omit `encoding` entirely. Labelling these parts
+        // `application/octet-stream` makes servers that validate a part's media
+        // type reject the upload — every type below is one such server's
+        // allow-list entry that the CLI previously could not satisfy.
+        assert_eq!(file_part_mime(None, Some("doc.txt")), "text/plain");
+        assert_eq!(file_part_mime(None, Some("paper.pdf")), "application/pdf");
+        assert_eq!(file_part_mime(None, Some("notes.md")), "text/markdown");
+        assert_eq!(file_part_mime(None, Some("page.html")), "text/html");
+        assert_eq!(file_part_mime(None, Some("book.epub")), "application/epub+zip");
+        assert_eq!(
+            file_part_mime(None, Some("report.docx")),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        // Audio, for the speech-to-text and dubbing endpoints.
+        assert_eq!(file_part_mime(None, Some("clip.mp3")), "audio/mpeg");
+        assert_eq!(file_part_mime(None, Some("clip.m4a")), "audio/mp4");
+        assert_eq!(file_part_mime(None, Some("clip.flac")), "audio/flac");
+        // Unrecognized or absent extension falls back to the OAS default.
+        assert_eq!(file_part_mime(None, Some("archive.xyz")), "application/octet-stream");
+        assert_eq!(file_part_mime(None, Some("README")), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_file_part_mime_is_case_insensitive_and_injection_safe() {
+        assert_eq!(file_part_mime(None, Some("CLIP.MP3")), "audio/mpeg");
+        // A control character in a spec-supplied value cannot smuggle a header
+        // break into the multipart preamble.
+        assert_eq!(
+            file_part_mime(Some("text/plain\r\nX-Injected: 1"), None),
+            "text/plainX-Injected: 1"
+        );
+        assert_eq!(file_part_mime(Some("\r\n"), None), "application/octet-stream");
     }
 
     /// Send a built multipart form to a local mock server and return the raw
@@ -4196,9 +5120,34 @@ mod tests {
         );
         assert!(
             body.contains("Content-Type: application/octet-stream"),
-            "file part should default to octet-stream; got: {body}"
+            "file part with an unrecognized extension should default to octet-stream; got: {body}"
         );
         assert!(body.contains("payload-bytes"), "file bytes should stream; got: {body}");
+    }
+
+    #[tokio::test]
+    async fn test_build_multipart_form_file_part_infers_content_type_from_extension() {
+        // The regression that made uploads unusable: with no `encoding` entry —
+        // which is what most specs have — every part went out as
+        // `application/octet-stream`, and servers that validate a part's media
+        // type rejected the request outright.
+        let tmp = std::env::temp_dir().join("fern_multipart_inferred.txt");
+        std::fs::write(&tmp, b"plain-text-payload").unwrap();
+        let body = multipart_body_string(vec![MultipartPart::File {
+            name: "file".into(),
+            path: tmp.to_string_lossy().into_owned(),
+            content_type: None,
+        }])
+        .await;
+        let _ = std::fs::remove_file(&tmp);
+        assert!(
+            body.contains("Content-Type: text/plain"),
+            "a .txt part should be labelled text/plain; got: {body}"
+        );
+        assert!(
+            !body.contains("Content-Type: application/octet-stream"),
+            "the octet-stream default must not survive a recognized extension; got: {body}"
+        );
     }
 
     #[tokio::test]
@@ -4526,7 +5475,10 @@ mod tests {
     #[test]
     fn test_binary_body_source_plain_path() {
         match BinaryBodySource::parse("/tmp/audio.mp3") {
-            BinaryBodySource::File(p) => assert_eq!(p.as_ref(), "/tmp/audio.mp3"),
+            BinaryBodySource::File { path, mode } => {
+                assert_eq!(path.as_ref(), "/tmp/audio.mp3");
+                assert_eq!(mode, AtMode::Auto);
+            }
             BinaryBodySource::Stdin => panic!("expected File"),
         }
     }
@@ -4534,7 +5486,10 @@ mod tests {
     #[test]
     fn test_binary_body_source_at_path_strips_prefix() {
         match BinaryBodySource::parse("@/tmp/audio.mp3") {
-            BinaryBodySource::File(p) => assert_eq!(p.as_ref(), "/tmp/audio.mp3"),
+            BinaryBodySource::File { path, mode } => {
+                assert_eq!(path.as_ref(), "/tmp/audio.mp3");
+                assert_eq!(mode, AtMode::Auto);
+            }
             BinaryBodySource::Stdin => panic!("expected File"),
         }
     }
@@ -4555,7 +5510,10 @@ mod tests {
         // Only the first `@` is stripped — matches curl's behavior for filenames
         // that legitimately start with `@`.
         match BinaryBodySource::parse("@@weird-name.mp3") {
-            BinaryBodySource::File(p) => assert_eq!(p.as_ref(), "@weird-name.mp3"),
+            BinaryBodySource::File { path, mode } => {
+                assert_eq!(path.as_ref(), "@weird-name.mp3");
+                assert_eq!(mode, AtMode::Auto);
+            }
             BinaryBodySource::Stdin => panic!("expected File"),
         }
     }
@@ -4566,7 +5524,74 @@ mod tests {
         // (rather than triggering the `@` strip). Users can pass a path that
         // literally begins with `@` this way. FER-10436.
         match BinaryBodySource::parse("\\@weird") {
-            BinaryBodySource::File(p) => assert_eq!(p.as_ref(), "@weird"),
+            BinaryBodySource::File { path, mode } => {
+                assert_eq!(path.as_ref(), "@weird");
+                assert_eq!(mode, AtMode::Auto);
+            }
+            BinaryBodySource::Stdin => panic!("expected File"),
+        }
+    }
+
+    // FER-10532 — explicit scheme prefixes carry an [`AtMode`] through to the
+    // executor. The path is stripped to the inner filesystem path; `-` is no
+    // longer the stdin sentinel under an explicit scheme.
+
+    #[test]
+    fn test_binary_body_source_file_scheme_is_text_mode() {
+        match BinaryBodySource::parse("@file:///tmp/audio.txt") {
+            BinaryBodySource::File { path, mode } => {
+                assert_eq!(path.as_ref(), "/tmp/audio.txt");
+                assert_eq!(mode, AtMode::Text);
+            }
+            BinaryBodySource::Stdin => panic!("expected File"),
+        }
+    }
+
+    #[test]
+    fn test_binary_body_source_data_scheme_is_data_mode() {
+        match BinaryBodySource::parse("@data:///tmp/audio.bin") {
+            BinaryBodySource::File { path, mode } => {
+                assert_eq!(path.as_ref(), "/tmp/audio.bin");
+                assert_eq!(mode, AtMode::Data);
+            }
+            BinaryBodySource::Stdin => panic!("expected File"),
+        }
+    }
+
+    #[test]
+    fn test_binary_body_source_file_scheme_dash_is_not_stdin() {
+        // `@file://-` is a literal file path named `-`, not stdin. Only the
+        // bare `Auto`-mode `@-` (and plain `-`) trigger stdin.
+        match BinaryBodySource::parse("@file://-") {
+            BinaryBodySource::File { path, mode } => {
+                assert_eq!(path.as_ref(), "-");
+                assert_eq!(mode, AtMode::Text);
+            }
+            BinaryBodySource::Stdin => panic!("explicit-scheme `-` must not be stdin"),
+        }
+    }
+
+    #[test]
+    fn test_binary_body_source_data_scheme_dash_is_not_stdin() {
+        match BinaryBodySource::parse("@data://-") {
+            BinaryBodySource::File { path, mode } => {
+                assert_eq!(path.as_ref(), "-");
+                assert_eq!(mode, AtMode::Data);
+            }
+            BinaryBodySource::Stdin => panic!("explicit-scheme `-` must not be stdin"),
+        }
+    }
+
+    #[test]
+    fn test_binary_body_source_backslash_at_file_scheme_is_literal_path() {
+        // `\@file://x` escapes the *whole* `@`-prefix grammar — the value
+        // becomes the literal path string `@file://x` (FER-10436 escape
+        // semantics). No scheme is parsed; mode stays `Auto`.
+        match BinaryBodySource::parse("\\@file:///etc/hosts") {
+            BinaryBodySource::File { path, mode } => {
+                assert_eq!(path.as_ref(), "@file:///etc/hosts");
+                assert_eq!(mode, AtMode::Auto);
+            }
             BinaryBodySource::Stdin => panic!("expected File"),
         }
     }
@@ -4740,6 +5765,130 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------
+    // FER-10532 — explicit `@file://` (UTF-8 only) and `@data://` (base64)
+    // scheme prefixes inside object-shorthand JSON values.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_resolve_file_refs_file_scheme_inlines_utf8_string() {
+        // `@file://<path>` reads UTF-8 text and embeds the string verbatim,
+        // never base64. Same wire output as the `Auto` mode would produce
+        // for valid UTF-8 — the value of the scheme is the *guarantee*.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"hello strict").unwrap();
+        let at_path = format!("@file://{}", tmp.path().to_str().unwrap());
+
+        let mut value = json!({ "outer": { "pic": at_path } });
+        resolve_file_refs(&mut value).expect("should resolve");
+        assert_eq!(value["outer"]["pic"], json!("hello strict"));
+    }
+
+    #[test]
+    fn test_resolve_file_refs_file_scheme_errors_on_non_utf8() {
+        // The defining behavior of `@file://`: refuse to silently base64
+        // a binary payload. The error must surface the JSON pointer and
+        // a hint about `@data://` so the user knows the escape hatch.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), [0xff, 0xfe, 0xfd]).unwrap();
+        let at_path = format!("@file://{}", tmp.path().to_str().unwrap());
+
+        let mut value = json!({ "blob": at_path });
+        let err = resolve_file_refs(&mut value).expect_err("must reject non-UTF-8");
+        let CliError::Validation(msg) = &err else {
+            panic!("expected Validation, got {err:?}");
+        };
+        assert!(
+            msg.contains("not valid UTF-8"),
+            "error must say `not valid UTF-8`: {msg}"
+        );
+        assert!(
+            msg.contains("@data://"),
+            "error must hint at @data:// escape hatch: {msg}"
+        );
+        assert!(msg.contains("/blob"), "error must include JSON pointer: {msg}");
+    }
+
+    #[test]
+    fn test_resolve_file_refs_data_scheme_base64s_utf8_input() {
+        // `@data://<path>` always base64-encodes, even on valid UTF-8
+        // (otherwise it would be identical to `@file://`). This is the
+        // case Stainless documents for "API expects base64 of a text
+        // payload."
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let utf8_payload = b"hello fern";
+        std::fs::write(tmp.path(), utf8_payload).unwrap();
+        let at_path = format!("@data://{}", tmp.path().to_str().unwrap());
+
+        let mut value = json!({ "encoded": at_path });
+        resolve_file_refs(&mut value).expect("should resolve");
+        let expected = BASE64.encode(utf8_payload);
+        assert_eq!(value["encoded"], json!(expected));
+    }
+
+    #[test]
+    fn test_resolve_file_refs_data_scheme_base64s_binary_input() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let raw_bytes: Vec<u8> = vec![0xff, 0xfe, 0x00, 0x01];
+        std::fs::write(tmp.path(), &raw_bytes).unwrap();
+        let at_path = format!("@data://{}", tmp.path().to_str().unwrap());
+
+        let mut value = json!({ "blob": at_path });
+        resolve_file_refs(&mut value).expect("should resolve");
+        assert_eq!(value["blob"], json!(BASE64.encode(&raw_bytes)));
+    }
+
+    #[test]
+    fn test_resolve_file_refs_backslash_at_file_scheme_is_literal() {
+        // `\@file://x` is a literal string `@file://x` — no scheme is
+        // parsed, no file is read. Same escape rule as `\@<rest>`.
+        let mut value = json!({ "k": "\\@file:///etc/hosts" });
+        resolve_file_refs(&mut value).expect("escape should not touch disk");
+        assert_eq!(value["k"], json!("@file:///etc/hosts"));
+    }
+
+    #[test]
+    fn test_resolve_file_refs_backslash_at_data_scheme_is_literal() {
+        let mut value = json!({ "k": "\\@data:///etc/hosts" });
+        resolve_file_refs(&mut value).expect("escape should not touch disk");
+        assert_eq!(value["k"], json!("@data:///etc/hosts"));
+    }
+
+    #[test]
+    fn test_parse_at_ref_recognises_schemes() {
+        // Direct coverage on the parser so each scheme has at least one
+        // unit test that doesn't have to spin up a filesystem.
+        match parse_at_ref("@file:///etc/hosts") {
+            AtRef::File { path, mode } => {
+                assert_eq!(path.as_ref(), "/etc/hosts");
+                assert_eq!(mode, AtMode::Text);
+            }
+            _ => panic!("expected File(Text)"),
+        }
+        match parse_at_ref("@data:///etc/hosts") {
+            AtRef::File { path, mode } => {
+                assert_eq!(path.as_ref(), "/etc/hosts");
+                assert_eq!(mode, AtMode::Data);
+            }
+            _ => panic!("expected File(Data)"),
+        }
+        match parse_at_ref("@/etc/hosts") {
+            AtRef::File { path, mode } => {
+                assert_eq!(path.as_ref(), "/etc/hosts");
+                assert_eq!(mode, AtMode::Auto);
+            }
+            _ => panic!("expected File(Auto)"),
+        }
+        match parse_at_ref("\\@file:///etc/hosts") {
+            AtRef::Escaped(s) => assert_eq!(s, "@file:///etc/hosts"),
+            _ => panic!("expected Escaped"),
+        }
+        match parse_at_ref("plain-path") {
+            AtRef::Plain(s) => assert_eq!(s, "plain-path"),
+            _ => panic!("expected Plain"),
+        }
+    }
+
     #[test]
     fn test_header_params_not_in_query_string() {
         let mut parameters = std::collections::HashMap::new();
@@ -4782,7 +5931,7 @@ mod tests {
         let params_json =
             r#"{"user_id": "123", "X-Custom-Header": "my-value", "limit": "10"}"#;
         let input =
-            parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[]).unwrap();
+            parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[], &[]).unwrap();
 
         // Header param should be in header_params
         assert_eq!(input.header_params.len(), 1);
@@ -4951,29 +6100,30 @@ mod tests {
     fn test_coerce_body_param_value_scalar_types() {
         // CLI flags arrive as Value::String; coerce them per the schema's type.
         assert_eq!(
-            coerce_body_param_value(&Value::String("42".into()), Some("integer")).unwrap(),
+            coerce_body_param_value(&Value::String("42".into()), Some("integer"), false).unwrap(),
             json!(42)
         );
         assert_eq!(
-            coerce_body_param_value(&Value::String("2.5".into()), Some("number")).unwrap(),
+            coerce_body_param_value(&Value::String("2.5".into()), Some("number"), false).unwrap(),
             json!(2.5)
         );
         assert_eq!(
-            coerce_body_param_value(&Value::String("true".into()), Some("boolean")).unwrap(),
+            coerce_body_param_value(&Value::String("true".into()), Some("boolean"), false).unwrap(),
             Value::Bool(true)
         );
         assert_eq!(
-            coerce_body_param_value(&Value::String("false".into()), Some("boolean")).unwrap(),
+            coerce_body_param_value(&Value::String("false".into()), Some("boolean"), false)
+                .unwrap(),
             Value::Bool(false)
         );
         // String type passes through unchanged.
         assert_eq!(
-            coerce_body_param_value(&Value::String("hello".into()), Some("string")).unwrap(),
+            coerce_body_param_value(&Value::String("hello".into()), Some("string"), false).unwrap(),
             json!("hello")
         );
         // Already-typed values from `--params` JSON pass through.
         assert_eq!(
-            coerce_body_param_value(&json!(99), Some("integer")).unwrap(),
+            coerce_body_param_value(&json!(99), Some("integer"), false).unwrap(),
             json!(99)
         );
     }
@@ -4984,6 +6134,7 @@ mod tests {
         let arr = coerce_body_param_value(
             &Value::String(r#"["a","b"]"#.into()),
             Some("array"),
+            false,
         )
         .unwrap();
         assert_eq!(arr, json!(["a", "b"]));
@@ -4991,6 +6142,7 @@ mod tests {
         let obj = coerce_body_param_value(
             &Value::String(r#"{"city":"SF"}"#.into()),
             Some("object"),
+            false,
         )
         .unwrap();
         assert_eq!(obj, json!({ "city": "SF" }));
@@ -5008,7 +6160,7 @@ mod tests {
             ("true", "boolean"),
             ("null", "null"),
         ] {
-            let err = coerce_body_param_value(&Value::String(bad.0.into()), Some("object"))
+            let err = coerce_body_param_value(&Value::String(bad.0.into()), Some("object"), false)
                 .unwrap_err();
             match err {
                 CliError::Validation(msg) => assert!(
@@ -5025,7 +6177,8 @@ mod tests {
         // shape check and reports "got string" — consistent with the
         // already-decoded `"hi"` case from collect_params_from_flags.
         let err =
-            coerce_body_param_value(&Value::String("{not json}".into()), Some("object")).unwrap_err();
+            coerce_body_param_value(&Value::String("{not json}".into()), Some("object"), false)
+                .unwrap_err();
         match err {
             CliError::Validation(msg) => assert!(
                 msg.contains("must be a JSON object") && msg.contains("string"),
@@ -5043,7 +6196,7 @@ mod tests {
             (json!(true), "boolean"),
             (Value::Null, "null"),
         ] {
-            let err = coerce_body_param_value(&pre_parsed, Some("object")).unwrap_err();
+            let err = coerce_body_param_value(&pre_parsed, Some("object"), false).unwrap_err();
             match err {
                 CliError::Validation(msg) => assert!(
                     msg.contains("must be a JSON object") && msg.contains(kind),
@@ -5055,10 +6208,24 @@ mod tests {
     }
 
     #[test]
+    fn test_coerce_body_param_value_passes_null_on_nullable_composite() {
+        // A promoted `anyOf: [$ref, null]` field is typed `object` *and*
+        // nullable, so the sentinel's resolved `null` must survive the shape
+        // check instead of being rejected as "must be a JSON object".
+        assert_eq!(
+            coerce_body_param_value(&Value::Null, Some("object"), true).unwrap(),
+            Value::Null
+        );
+        // Non-nullable object fields still reject null.
+        assert!(coerce_body_param_value(&Value::Null, Some("object"), false).is_err());
+    }
+
+    #[test]
     fn test_coerce_body_param_value_rejects_bad_input() {
         let err = coerce_body_param_value(
             &Value::String("not-an-int".into()),
             Some("integer"),
+            false,
         )
         .unwrap_err();
         match err {
@@ -5069,6 +6236,7 @@ mod tests {
         let err = coerce_body_param_value(
             &Value::String("yes".into()),
             Some("boolean"),
+            false,
         )
         .unwrap_err();
         match err {
@@ -5111,7 +6279,7 @@ mod tests {
         };
 
         let params_json = r#"{"name": "Acme", "count": "3"}"#;
-        let input = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[])
+        let input = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[], &[])
             .unwrap();
 
         // Body must contain both fields, with `count` coerced to a JSON integer.
@@ -5167,6 +6335,7 @@ mod tests {
             false,
             None,
             &[],
+            &[],
         )
         .unwrap_err();
         match err {
@@ -5213,7 +6382,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[])
+        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &[])
             .unwrap_err();
         match err {
             CliError::Validation(msg) => {
@@ -5255,7 +6424,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[])
+        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &[])
             .unwrap_err();
         match err {
             CliError::Validation(msg) => {
@@ -5306,6 +6475,7 @@ mod tests {
             false,
             None,
             &[],
+            &[],
         )
         .unwrap_err();
         match err {
@@ -5344,7 +6514,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[])
+        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &[])
             .unwrap_err();
         match err {
             CliError::Validation(msg) => {
@@ -5383,7 +6553,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[])
+        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &[])
             .unwrap_err();
         match err {
             CliError::Validation(msg) => {
@@ -5427,7 +6597,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[])
+        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &[])
             .unwrap_err();
         match err {
             CliError::Validation(msg) => {
@@ -5500,7 +6670,7 @@ mod tests {
         };
 
         let params_json = r#"{"name": "not-an-integer"}"#;
-        let err = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[])
+        let err = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[], &[])
             .unwrap_err();
         match err {
             CliError::Validation(msg) => {
@@ -5549,6 +6719,7 @@ mod tests {
             false,
             None,
             &[],
+            &[],
         )
         .unwrap_err();
         match err {
@@ -5596,7 +6767,7 @@ mod tests {
         };
 
         let params_json = r#"{"name": "{\"last\":\"Lincoln\"}", "name.first": "Abraham"}"#;
-        let err = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[])
+        let err = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[], &[])
             .unwrap_err();
         match err {
             CliError::Validation(msg) => {
@@ -5637,7 +6808,7 @@ mod tests {
         };
 
         let params_json = r#"{"name": "{\"first\":\"Abraham\",\"last\":\"Lincoln\"}"}"#;
-        let input = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[])
+        let input = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[], &[])
             .unwrap();
         let body = input.body.expect("body should be populated");
         assert_eq!(body, json!({ "name": { "first": "Abraham", "last": "Lincoln" } }));
@@ -5681,7 +6852,7 @@ mod tests {
         };
 
         let params_json = r#"{"name": "{\"first\":\"Abraham\"}"}"#;
-        let input = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[])
+        let input = parse_and_validate_inputs(&doc, &method, Some(params_json), None, false, None, &[], &[])
             .expect("required leaf satisfied by ancestor shorthand should pass");
         let body = input.body.expect("body should be populated");
         assert_eq!(body, json!({ "name": { "first": "Abraham" } }));
@@ -5722,7 +6893,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[])
+        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &[])
             .unwrap_err();
         match err {
             CliError::Validation(msg) => {
@@ -5785,6 +6956,101 @@ mod tests {
 
         let body = json!({ "name": "My File" });
         assert!(validate_body_against_schema(&body, "File", &doc).is_ok());
+    }
+
+    /// Build a doc whose body schema references scalar and array components,
+    /// the shape that made validation a no-op for most real specs.
+    fn ref_schema_doc() -> RestDescription {
+        use crate::openapi::discovery::{JsonSchema, JsonSchemaProperty};
+        let mut schemas = HashMap::new();
+        schemas.insert(
+            "Url".to_string(),
+            JsonSchema {
+                schema_type: Some("string".to_string()),
+                ..Default::default()
+            },
+        );
+        schemas.insert(
+            "Labels".to_string(),
+            JsonSchema {
+                schema_type: Some("array".to_string()),
+                items: Some(Box::new(JsonSchemaProperty {
+                    prop_type: Some("string".to_string()),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+        );
+        // `Alias: {$ref: Url}` — a bare-ref component, previously unfollowed.
+        schemas.insert(
+            "Alias".to_string(),
+            JsonSchema {
+                schema_ref: Some("Url".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut properties = HashMap::new();
+        for (name, target) in [("url", "Url"), ("labels", "Labels"), ("alias", "Alias")] {
+            properties.insert(
+                name.to_string(),
+                JsonSchemaProperty {
+                    schema_ref: Some(target.to_string()),
+                    ..Default::default()
+                },
+            );
+        }
+        schemas.insert(
+            "Body".to_string(),
+            JsonSchema {
+                schema_type: Some("object".to_string()),
+                properties,
+                ..Default::default()
+            },
+        );
+        RestDescription {
+            schemas,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_validate_body_rejects_wrong_type_behind_a_ref() {
+        // `validate_value` only had an object branch, so a `$ref` to a scalar
+        // or array component fell off the end unchecked and ANY value was
+        // accepted. `--dry-run` then exited 0 on a garbage body, which reads
+        // as confirmation to an agent.
+        let doc = ref_schema_doc();
+
+        let err = validate_body_against_schema(&json!({ "url": 123 }), "Body", &doc)
+            .expect_err("integer for a $ref'd string must be rejected");
+        let msg = format!("{err}");
+        assert!(msg.contains("Expected type 'string'"), "got: {msg}");
+
+        let err = validate_body_against_schema(&json!({ "labels": "a" }), "Body", &doc)
+            .expect_err("string for a $ref'd array must be rejected");
+        assert!(format!("{err}").contains("Expected type 'array'"));
+
+        // Element types behind the ref are checked too.
+        let err = validate_body_against_schema(&json!({ "labels": [1] }), "Body", &doc)
+            .expect_err("wrong element type must be rejected");
+        assert!(format!("{err}").contains("Expected type 'string'"));
+
+        // A chain of bare-ref components resolves to the terminal schema.
+        let err = validate_body_against_schema(&json!({ "alias": 7 }), "Body", &doc)
+            .expect_err("$ref chain must resolve and still type-check");
+        assert!(format!("{err}").contains("Expected type 'string'"));
+    }
+
+    #[test]
+    fn test_validate_body_still_accepts_correct_types_behind_a_ref() {
+        // Guard the other direction: the new checks must not reject valid input.
+        let doc = ref_schema_doc();
+        validate_body_against_schema(
+            &json!({ "url": "https://example.com", "labels": ["a", "b"], "alias": "x" }),
+            "Body",
+            &doc,
+        )
+        .expect("well-typed body must validate");
     }
 
     #[test]
@@ -8174,6 +9440,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let result = handle_json_response(
             r#"{"data":[{"id":1}],"meta":{"total":1}}"#,
@@ -8189,6 +9456,7 @@ mod tests {
             Some("data"),
             false,
             "things.list",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8209,6 +9477,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let body = r#"{"data":[{"id":1}],"meta":{"total":1}}"#;
         let result = handle_json_response(
@@ -8225,6 +9494,7 @@ mod tests {
             Some("data"),
             true, // no_extract
             "things.list",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8240,6 +9510,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let err = handle_json_response(
             r#"{"foo":1}"#,
@@ -8255,6 +9526,7 @@ mod tests {
             Some("data"),
             false,
             "things.list",
+            &mut pager_none,
         )
         .await
         .expect_err("unresolved extract path must surface as a validation error");
@@ -8284,6 +9556,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let result = handle_json_response(
             r#"{"data":[{"id":1},{"id":2}],"next":"page-2"}"#,
@@ -8299,6 +9572,7 @@ mod tests {
             Some("data"),
             false,
             "things.list",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8323,6 +9597,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let result = handle_json_response(
             r#"{"items":["a"]}"#,
@@ -8338,6 +9613,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8354,6 +9630,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let result = handle_json_response(
             "not json at all",
@@ -8369,6 +9646,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8390,6 +9668,7 @@ mod tests {
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
 
+        let mut pager = None;
         let result = handle_json_response(
             r#"{"items":[],"nextPageToken":"next-tok"}"#,
             &pagination,
@@ -8404,6 +9683,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager,
         )
         .await
         .unwrap();
@@ -8413,6 +9693,140 @@ mod tests {
             PageState::Cursor(Some(ref t)) => assert_eq!(t, "next-tok"),
             other => panic!("expected Cursor(Some(\"next-tok\")), got {other:?}"),
         }
+    }
+
+    /// Drive `handle_json_response` for a pagination variant and report whether
+    /// it chose to continue, plus the resulting page state.
+    async fn paginate_once(
+        endpoint_pag: &EndpointPagination,
+        body: &str,
+        request_url: &str,
+    ) -> (bool, PageState) {
+        let pagination = PaginationConfig {
+            page_all: true,
+            page_limit: 10,
+            page_delay_ms: 0,
+            cli_name: "pageguard".to_string(),
+            ..PaginationConfig::default()
+        };
+        let pipeline = crate::formatter::OutputPipeline::default();
+        let mut pages_fetched = 0u32;
+        let mut page_state = PageState::initial(Some(endpoint_pag));
+        let mut captured = Vec::new();
+        let mut pager = None;
+        let cont = handle_json_response(
+            body,
+            &pagination,
+            Some(endpoint_pag),
+            &pipeline,
+            &mut pages_fetched,
+            &mut page_state,
+            false,
+            &mut captured,
+            request_url,
+            &[],
+            None,
+            false,
+            "test-op",
+            &mut pager,
+        )
+        .await
+        .unwrap();
+        (cont, page_state)
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pagination_uri_refuses_a_cross_host_next_url() {
+        // `next_uri` is taken from the response body, so without a guard the
+        // server picks the next request's host — and the credential goes with
+        // it. Pagination must halt instead of following.
+        // The guard must be active; `#[serial]` keeps this from racing other
+        // env-touching tests.
+        std::env::remove_var("PAGEGUARD_ALLOW_CROSS_HOST_PAGINATION");
+        let pag = EndpointPagination::Uri {
+            next_uri: "next".into(),
+            results: "items".into(),
+        };
+        let (cont, state) = paginate_once(
+            &pag,
+            r#"{"items":[1],"next":"https://evil.example.net/v1/things?cursor=2"}"#,
+            "https://api.example.com/v1/things",
+        )
+        .await;
+        assert!(!cont, "pagination must not continue to another host");
+        assert!(
+            !matches!(state, PageState::NextUrl(Some(_))),
+            "the off-host URL must not be stored as the next page, got {state:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pagination_uri_follows_a_same_host_next_url() {
+        // The guard must be active; `#[serial]` keeps this from racing other
+        // env-touching tests.
+        std::env::remove_var("PAGEGUARD_ALLOW_CROSS_HOST_PAGINATION");
+        let pag = EndpointPagination::Uri {
+            next_uri: "next".into(),
+            results: "items".into(),
+        };
+        let (cont, state) = paginate_once(
+            &pag,
+            r#"{"items":[1],"next":"https://api.example.com/v1/things?cursor=2"}"#,
+            "https://api.example.com/v1/things",
+        )
+        .await;
+        assert!(cont, "same-host pagination must still work");
+        assert_eq!(
+            state.url_override(),
+            Some("https://api.example.com/v1/things?cursor=2")
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pagination_path_refuses_an_absolute_cross_host_next_path() {
+        // `next_path` is usually relative, but an absolute URL replaces the
+        // base's origin — the same hole by a different route.
+        // The guard must be active; `#[serial]` keeps this from racing other
+        // env-touching tests.
+        std::env::remove_var("PAGEGUARD_ALLOW_CROSS_HOST_PAGINATION");
+        let pag = EndpointPagination::Path {
+            next_path: "next".into(),
+            results: "items".into(),
+        };
+        let (cont, state) = paginate_once(
+            &pag,
+            r#"{"items":[1],"next":"https://evil.example.net/v1/things?cursor=2"}"#,
+            "https://api.example.com/v1/things",
+        )
+        .await;
+        assert!(!cont, "an absolute off-host next_path must not be followed");
+        assert!(!matches!(state, PageState::NextUrl(Some(_))), "got {state:?}");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pagination_path_still_resolves_a_relative_next_path() {
+        // The guard must be active; `#[serial]` keeps this from racing other
+        // env-touching tests.
+        std::env::remove_var("PAGEGUARD_ALLOW_CROSS_HOST_PAGINATION");
+        let pag = EndpointPagination::Path {
+            next_path: "next".into(),
+            results: "items".into(),
+        };
+        let (cont, state) = paginate_once(
+            &pag,
+            r#"{"items":[1],"next":"/v1/things?cursor=2"}"#,
+            "https://api.example.com/v1/things",
+        )
+        .await;
+        assert!(cont, "relative pagination must be unaffected by the guard");
+        assert_eq!(
+            state.url_override(),
+            Some("https://api.example.com/v1/things?cursor=2")
+        );
     }
 
     #[tokio::test]
@@ -8428,6 +9842,7 @@ mod tests {
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
 
+        let mut pager = None;
         let result = handle_json_response(
             r#"{"items":[],"nextPageToken":"would-be-next"}"#,
             &pagination,
@@ -8442,6 +9857,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager,
         )
         .await
         .unwrap();
@@ -8475,6 +9891,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let result = handle_json_response(
             r#"{"entries":[{"id":"1"}],"next_marker":"abc"}"#,
@@ -8490,6 +9907,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8513,6 +9931,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Cursor(None);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let result = handle_json_response(
             r#"{"entries":[{"id":"2"}],"next_marker":""}"#,
@@ -8528,6 +9947,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8548,6 +9968,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Offset(0);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let result = handle_json_response(
             r#"{"users":[{"id":1},{"id":2},{"id":3}],"meta":{"has_more":true}}"#,
@@ -8563,6 +9984,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8587,6 +10009,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Offset(0);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
 
         let result = handle_json_response(
             r#"{"users":[{"id":1}],"meta":{"has_more":false}}"#,
@@ -8602,6 +10025,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8627,6 +10051,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Offset(0);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
         let request_query_params = vec![("limit".to_string(), "50".to_string())];
 
         let result = handle_json_response(
@@ -8643,6 +10068,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -8668,6 +10094,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut page_state = PageState::Offset(0);
         let mut captured = Vec::new();
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
         let request_query_params = vec![("limit".to_string(), "3".to_string())];
 
         let result = handle_json_response(
@@ -8684,6 +10111,7 @@ mod tests {
             None,
             false,
             "test-op",
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -9194,7 +10622,7 @@ mod tests {
         let doc = RestDescription::default();
         let method = RestMethod::default();
         let err =
-            parse_and_validate_inputs(&doc, &method, Some("{not json}"), None, false, None, &[]).unwrap_err();
+            parse_and_validate_inputs(&doc, &method, Some("{not json}"), None, false, None, &[], &[]).unwrap_err();
         assert!(err.to_string().contains("Invalid --params JSON"));
     }
 
@@ -9203,7 +10631,7 @@ mod tests {
         let doc = RestDescription::default();
         let method = RestMethod::default();
         let err =
-            parse_and_validate_inputs(&doc, &method, None, Some("{not json}"), false, None, &[]).unwrap_err();
+            parse_and_validate_inputs(&doc, &method, None, Some("{not json}"), false, None, &[], &[]).unwrap_err();
         assert!(err.to_string().contains("Invalid --json body"));
     }
 
@@ -9223,7 +10651,7 @@ mod tests {
             parameters,
             ..Default::default()
         };
-        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[]).unwrap_err();
+        let err = parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &[]).unwrap_err();
         assert!(err.to_string().contains("Required parameter 'api_key'"));
     }
 
@@ -9701,6 +11129,71 @@ mod tests {
         .expect("text projection must succeed");
         assert_eq!(value, Value::String("raw line".to_string()));
     }
+
+    // ---------------------------------------------------------------
+    // SSE content-type auto-detection helpers
+    // ---------------------------------------------------------------
+
+    /// Verifies the auto-detection predicate: a response whose
+    /// Content-Type is `text/event-stream` AND whose method has no
+    /// `x-fern-streaming` config should be routed to the SSE branch.
+    #[test]
+    fn test_sse_autodetect_triggers_on_event_stream_content_type() {
+        let content_type = "text/event-stream";
+        let method = RestMethod::default();
+        assert!(
+            content_type.contains("text/event-stream") && method.streaming.is_none(),
+            "auto-detect must trigger when content_type is text/event-stream and streaming is None"
+        );
+    }
+
+    #[test]
+    fn test_sse_autodetect_triggers_with_charset_suffix() {
+        // Servers may send `text/event-stream; charset=utf-8`
+        let content_type = "text/event-stream; charset=utf-8";
+        let method = RestMethod::default();
+        assert!(
+            content_type.contains("text/event-stream") && method.streaming.is_none(),
+            "auto-detect must trigger even with charset parameter"
+        );
+    }
+
+    #[test]
+    fn test_sse_autodetect_skipped_when_streaming_configured() {
+        let content_type = "text/event-stream";
+        let method = RestMethod {
+            streaming: Some(StreamingConfig::Sse { terminator: None }),
+            ..Default::default()
+        };
+        assert!(
+            !(content_type.contains("text/event-stream") && method.streaming.is_none()),
+            "auto-detect must NOT trigger when x-fern-streaming is already set"
+        );
+    }
+
+    #[test]
+    fn test_sse_autodetect_skipped_for_json_content_type() {
+        let content_type = "application/json";
+        let method = RestMethod::default();
+        assert!(
+            !(content_type.contains("text/event-stream") && method.streaming.is_none()),
+            "auto-detect must NOT trigger for application/json"
+        );
+    }
+
+    #[test]
+    fn test_sse_autodetect_synthesized_config_is_sse_no_terminator() {
+        // The auto-detected config must be SSE with no terminator,
+        // matching what `StreamingConfig::Sse { terminator: None }`
+        // produces.
+        let config = StreamingConfig::Sse { terminator: None };
+        match &config {
+            StreamingConfig::Sse { terminator } => {
+                assert!(terminator.is_none(), "auto-detected SSE must have no terminator");
+            }
+            _ => panic!("expected Sse variant"),
+        }
+    }
 }
 
 #[tokio::test]
@@ -9778,11 +11271,100 @@ async fn test_execute_method_dry_run() {
         false, // no_extract
         false, // no_retry
         false, // no_stream
+        false, // debug
+        &[],
         &[],
     )
     .await;
 
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_dry_run_redacts_credential_headers() {
+    // `--dry-run` output is routinely pasted into bug reports, so it must not
+    // print the credential. The value reaches `header_params` whenever the spec
+    // models it as a header parameter — an `apiKey`-in-header scheme, which is
+    // the shape the spec below declares.
+    let mut security_schemes = HashMap::new();
+    security_schemes.insert(
+        "ApiKeyAuth".to_string(),
+        crate::openapi::discovery::SecurityScheme::ApiKeyHeader {
+            name: "xi-api-key".to_string(),
+        },
+    );
+    let doc = RestDescription {
+        root_url: "https://api.example.com/".to_string(),
+        service_path: "v1/".to_string(),
+        security_schemes,
+        ..Default::default()
+    };
+
+    let mut parameters = HashMap::new();
+    for name in ["xi-api-key", "Authorization", "X-Request-Id"] {
+        parameters.insert(
+            name.to_string(),
+            crate::openapi::discovery::MethodParameter {
+                location: Some("header".to_string()),
+                ..Default::default()
+            },
+        );
+    }
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        id: Some("things.list".to_string()),
+        path: "things".to_string(),
+        parameters,
+        ..Default::default()
+    };
+
+    let params_json = r#"{"xi-api-key":"sk-secret-value","Authorization":"Bearer tok-secret","X-Request-Id":"req-42"}"#;
+    let http_config = crate::http::HttpConfig::new("test").unwrap();
+    let out = execute_method(
+        &doc,
+        &method,
+        Some(params_json),
+        None,
+        &crate::auth::no_auth_provider(),
+        None,
+        None,
+        None,
+        None,
+        true, // dry_run
+        &PaginationConfig::default(),
+        &crate::formatter::OutputPipeline::default(),
+        true, // capture_output — returns the dry-run JSON instead of printing
+        None,
+        &http_config,
+        false,
+        false,
+        false,
+        false, // debug off: redaction must not depend on --debug
+        &[],
+        &[],
+    )
+    .await
+    .expect("dry run should succeed")
+    .expect("capture_output should return the dry-run info");
+
+    let rendered = serde_json::to_string(&out).unwrap();
+    assert!(
+        !rendered.contains("sk-secret-value"),
+        "the spec-declared api key must be redacted, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains("tok-secret"),
+        "a well-known credential header must be redacted, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("[REDACTED]"),
+        "redaction should be visible in the output, got: {rendered}"
+    );
+    // Non-credential headers stay legible — redaction must not blind the flag.
+    assert!(
+        rendered.contains("req-42"),
+        "non-sensitive headers should still be shown, got: {rendered}"
+    );
 }
 
 #[tokio::test]
@@ -9826,6 +11408,8 @@ async fn test_execute_method_missing_path_param() {
         false, // no_extract
         false, // no_retry
         false, // no_stream
+        false, // debug
+        &[],
         &[],
     )
     .await;
@@ -10018,4 +11602,501 @@ async fn test_bearer_header_sends_bearer_prefix() {
     let built = request.build().unwrap();
     let header_val = built.headers().get("x-auth").and_then(|v| v.to_str().ok());
     assert_eq!(header_val, Some("Bearer mytoken"));
+}
+
+// ---------------------------------------------------------------
+// HTTP format helpers
+// ---------------------------------------------------------------
+
+#[test]
+fn format_http_version_known_versions() {
+    assert_eq!(format_http_version(reqwest::Version::HTTP_09), "HTTP/0.9");
+    assert_eq!(format_http_version(reqwest::Version::HTTP_10), "HTTP/1.0");
+    assert_eq!(format_http_version(reqwest::Version::HTTP_11), "HTTP/1.1");
+    assert_eq!(format_http_version(reqwest::Version::HTTP_2), "HTTP/2");
+    assert_eq!(format_http_version(reqwest::Version::HTTP_3), "HTTP/3");
+}
+
+#[test]
+fn write_http_preamble_basic() {
+    let mut buf = Vec::new();
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("content-type", "application/json".parse().unwrap());
+    headers.insert("x-request-id", "abc123".parse().unwrap());
+
+    write_http_preamble(
+        &mut buf,
+        reqwest::Version::HTTP_11,
+        reqwest::StatusCode::OK,
+        &headers,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(buf).unwrap();
+    assert!(
+        output.starts_with("HTTP/1.1 200 OK\r\n"),
+        "should start with status line, got: {output}"
+    );
+    assert!(
+        output.contains("content-type: application/json\r\n"),
+        "should include content-type header, got: {output}"
+    );
+    assert!(
+        output.contains("x-request-id: abc123\r\n"),
+        "should include custom header, got: {output}"
+    );
+    assert!(
+        output.ends_with("\r\n\r\n"),
+        "should end with blank line separator, got: {output}"
+    );
+}
+
+#[test]
+fn write_http_preamble_error_status() {
+    let mut buf = Vec::new();
+    let headers = reqwest::header::HeaderMap::new();
+
+    write_http_preamble(
+        &mut buf,
+        reqwest::Version::HTTP_11,
+        reqwest::StatusCode::NOT_FOUND,
+        &headers,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(buf).unwrap();
+    assert!(
+        output.starts_with("HTTP/1.1 404 Not Found\r\n"),
+        "should show 404 status line, got: {output}"
+    );
+}
+
+#[test]
+fn write_http_preamble_no_headers() {
+    let mut buf = Vec::new();
+    let headers = reqwest::header::HeaderMap::new();
+
+    write_http_preamble(
+        &mut buf,
+        reqwest::Version::HTTP_2,
+        reqwest::StatusCode::NO_CONTENT,
+        &headers,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(buf).unwrap();
+    assert_eq!(
+        output, "HTTP/2 204 No Content\r\n\r\n",
+        "empty headers should produce status line + blank line"
+    );
+}
+
+#[test]
+fn write_http_preamble_binary_header_value() {
+    let mut buf = Vec::new();
+    let mut headers = reqwest::header::HeaderMap::new();
+    // Insert a header value containing non-visible ASCII (bytes that
+    // fail `HeaderValue::to_str`).  `HeaderValue::from_bytes` accepts
+    // any bytes in the 0x20..=0xFF range plus TAB, so we use a raw
+    // byte sequence that includes characters outside the visible ASCII
+    // range accepted by `to_str` (which requires only 0x20..=0x7E
+    // plus TAB).
+    let raw_val =
+        reqwest::header::HeaderValue::from_bytes(&[0x80, 0xAB, 0xFF]).unwrap();
+    headers.insert("x-binary", raw_val);
+
+    write_http_preamble(
+        &mut buf,
+        reqwest::Version::HTTP_11,
+        reqwest::StatusCode::OK,
+        &headers,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(buf).unwrap();
+    assert!(
+        output.contains("x-binary: <binary>\r\n"),
+        "non-UTF8 header value should fall back to <binary>, got: {output}"
+    );
+}
+
+#[test]
+fn write_http_preamble_duplicate_headers() {
+    let mut buf = Vec::new();
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.append("set-cookie", "a=1".parse().unwrap());
+    headers.append("set-cookie", "b=2".parse().unwrap());
+
+    write_http_preamble(
+        &mut buf,
+        reqwest::Version::HTTP_11,
+        reqwest::StatusCode::OK,
+        &headers,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(buf).unwrap();
+    assert!(
+        output.contains("set-cookie: a=1\r\n"),
+        "should include first set-cookie value, got: {output}"
+    );
+    assert!(
+        output.contains("set-cookie: b=2\r\n"),
+        "should include second set-cookie value, got: {output}"
+    );
+}
+
+// ── Global Parameter Injection Tests ──────────────────────────
+
+#[test]
+fn test_global_param_header_injection() {
+    use crate::openapi::app::ResolvedGlobalParam;
+    use crate::openapi::discovery::{GlobalParameterLocation, RestDescription, RestMethod};
+
+    let doc = RestDescription {
+        base_url: Some("https://api.example.com/".to_string()),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "things".to_string(),
+        ..Default::default()
+    };
+    let global_params = vec![ResolvedGlobalParam {
+        name: "api-version".to_string(),
+        location: GlobalParameterLocation::Header,
+        target: "X-Api-Version".to_string(),
+        value: "2024-01-01".to_string(),
+    }];
+    let input =
+        parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &global_params)
+            .unwrap();
+    assert_eq!(input.header_params.len(), 1);
+    assert_eq!(input.header_params[0].0, "X-Api-Version");
+    assert_eq!(input.header_params[0].1, "2024-01-01");
+}
+
+#[test]
+fn test_global_param_header_per_op_override_suppresses() {
+    use crate::openapi::app::ResolvedGlobalParam;
+    use crate::openapi::discovery::{
+        GlobalParameterLocation, MethodParameter, RestDescription, RestMethod,
+    };
+
+    let mut parameters = std::collections::HashMap::new();
+    parameters.insert(
+        "X-Api-Version".to_string(),
+        MethodParameter {
+            location: Some("header".to_string()),
+            ..Default::default()
+        },
+    );
+    let doc = RestDescription {
+        base_url: Some("https://api.example.com/".to_string()),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "things".to_string(),
+        parameters,
+        ..Default::default()
+    };
+    let params_json = r#"{"X-Api-Version": "per-op-v3"}"#;
+    let global_params = vec![ResolvedGlobalParam {
+        name: "api-version".to_string(),
+        location: GlobalParameterLocation::Header,
+        target: "X-Api-Version".to_string(),
+        value: "global-v1".to_string(),
+    }];
+    let input = parse_and_validate_inputs(
+        &doc,
+        &method,
+        Some(params_json),
+        None,
+        false,
+        None,
+        &[],
+        &global_params,
+    )
+    .unwrap();
+    assert_eq!(input.header_params.len(), 1);
+    assert_eq!(
+        input.header_params[0].1, "per-op-v3",
+        "per-op value should win over global"
+    );
+}
+
+#[test]
+fn test_global_param_query_injection() {
+    use crate::openapi::app::ResolvedGlobalParam;
+    use crate::openapi::discovery::{GlobalParameterLocation, RestDescription, RestMethod};
+
+    let doc = RestDescription {
+        base_url: Some("https://api.example.com/".to_string()),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "things".to_string(),
+        ..Default::default()
+    };
+    let global_params = vec![ResolvedGlobalParam {
+        name: "api-version".to_string(),
+        location: GlobalParameterLocation::Query,
+        target: "api_version".to_string(),
+        value: "2024-01-01".to_string(),
+    }];
+    let input =
+        parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &global_params)
+            .unwrap();
+    assert!(
+        input.query_params.iter().any(|(k, v)| k == "api_version" && v == "2024-01-01"),
+        "query param should appear in query_params: {:?}",
+        input.query_params
+    );
+}
+
+#[test]
+fn test_global_param_body_injection() {
+    use crate::openapi::app::ResolvedGlobalParam;
+    use crate::openapi::discovery::{GlobalParameterLocation, RestDescription, RestMethod};
+
+    let doc = RestDescription {
+        base_url: Some("https://api.example.com/".to_string()),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "things".to_string(),
+        ..Default::default()
+    };
+    let global_params = vec![ResolvedGlobalParam {
+        name: "currency".to_string(),
+        location: GlobalParameterLocation::Body,
+        target: "currency".to_string(),
+        value: "USD".to_string(),
+    }];
+    let input =
+        parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &global_params)
+            .unwrap();
+    let body = input.body.expect("body should be populated from global param");
+    assert_eq!(body["currency"], "USD");
+}
+
+#[test]
+fn test_global_param_nested_body_injection_when_absent() {
+    use crate::openapi::app::ResolvedGlobalParam;
+    use crate::openapi::discovery::{GlobalParameterLocation, RestDescription, RestMethod};
+
+    // A nested (dotted) body target is created when the user did not
+    // supply it.
+    let doc = RestDescription {
+        base_url: Some("https://api.example.com/".to_string()),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "search".to_string(),
+        ..Default::default()
+    };
+    let global_params = vec![ResolvedGlobalParam {
+        name: "currency".to_string(),
+        location: GlobalParameterLocation::Body,
+        target: "config.currency".to_string(),
+        value: "USD".to_string(),
+    }];
+    let input = parse_and_validate_inputs(
+        &doc,
+        &method,
+        None,
+        Some(r#"{"query":"shoes"}"#),
+        false,
+        None,
+        &[],
+        &global_params,
+    )
+    .unwrap();
+    let body = input.body.expect("body should carry the injected nested global");
+    assert_eq!(body["config"]["currency"], "USD");
+    assert_eq!(body["query"], "shoes");
+}
+
+#[test]
+fn test_global_param_nested_body_does_not_clobber_user_value() {
+    use crate::openapi::app::ResolvedGlobalParam;
+    use crate::openapi::discovery::{GlobalParameterLocation, RestDescription, RestMethod};
+
+    // Regression (FER-11190): a body global with a nested target like
+    // `config.currency` must NOT overwrite a value the user supplied at
+    // that same nested path via `--json`. A flat `contains_key("config.
+    // currency")` check misses the nested key and used to clobber it.
+    let doc = RestDescription {
+        base_url: Some("https://api.example.com/".to_string()),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "search".to_string(),
+        ..Default::default()
+    };
+    let global_params = vec![ResolvedGlobalParam {
+        name: "currency".to_string(),
+        location: GlobalParameterLocation::Body,
+        target: "config.currency".to_string(),
+        value: "USD".to_string(),
+    }];
+    let input = parse_and_validate_inputs(
+        &doc,
+        &method,
+        None,
+        Some(r#"{"config":{"currency":"EUR"}}"#),
+        false,
+        None,
+        &[],
+        &global_params,
+    )
+    .unwrap();
+    let body = input.body.expect("body should be present");
+    assert_eq!(
+        body["config"]["currency"], "EUR",
+        "user-supplied nested value must win over the global default"
+    );
+}
+
+#[test]
+fn test_global_param_path_injection() {
+    use crate::openapi::app::ResolvedGlobalParam;
+    use crate::openapi::discovery::{GlobalParameterLocation, RestDescription, RestMethod};
+
+    // Path param supplied by global param only (not in method.parameters),
+    // so no required-param validation fires before injection.
+    let doc = RestDescription {
+        base_url: Some("https://api.example.com/".to_string()),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "orgs/{orgId}/users".to_string(),
+        ..Default::default()
+    };
+    let global_params = vec![ResolvedGlobalParam {
+        name: "org".to_string(),
+        location: GlobalParameterLocation::Path,
+        target: "orgId".to_string(),
+        value: "my-org-123".to_string(),
+    }];
+    let input =
+        parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &global_params)
+            .unwrap();
+    assert!(
+        input.full_url.contains("my-org-123"),
+        "path param should be substituted in URL: {}",
+        input.full_url
+    );
+    assert!(
+        !input.full_url.contains("{orgId}"),
+        "template variable should be replaced: {}",
+        input.full_url
+    );
+}
+
+#[test]
+fn test_global_param_path_injection_satisfies_declared_required_param() {
+    use crate::openapi::app::ResolvedGlobalParam;
+    use crate::openapi::discovery::{
+        GlobalParameterLocation, MethodParameter, RestDescription, RestMethod,
+    };
+
+    // Regression (FER-11190): the path template variable is ALSO declared
+    // as a required `location: path` parameter (as OpenAPI requires). The
+    // required-param validation must not reject the request when a resolved
+    // global parameter targets that same variable — its value is injected
+    // right after validation.
+    let mut parameters = std::collections::HashMap::new();
+    parameters.insert(
+        "regionId".to_string(),
+        MethodParameter {
+            location: Some("path".to_string()),
+            required: true,
+            ..Default::default()
+        },
+    );
+    let doc = RestDescription {
+        base_url: Some("https://api.example.com/".to_string()),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "GET".to_string(),
+        path: "regions/{regionId}/items".to_string(),
+        parameter_order: vec!["regionId".to_string()],
+        parameters,
+        ..Default::default()
+    };
+    let global_params = vec![ResolvedGlobalParam {
+        name: "region".to_string(),
+        location: GlobalParameterLocation::Path,
+        target: "regionId".to_string(),
+        value: "us".to_string(),
+    }];
+    let input =
+        parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &global_params)
+            .expect("resolved global must satisfy the declared required path param");
+    assert!(
+        input.full_url.contains("regions/us/items"),
+        "path param should be substituted from the global value: {}",
+        input.full_url
+    );
+    assert!(
+        !input.full_url.contains("{regionId}"),
+        "template variable should be replaced: {}",
+        input.full_url
+    );
+}
+
+#[test]
+fn test_global_param_multiple_locations() {
+    use crate::openapi::app::ResolvedGlobalParam;
+    use crate::openapi::discovery::{GlobalParameterLocation, RestDescription, RestMethod};
+
+    let doc = RestDescription {
+        base_url: Some("https://api.example.com/".to_string()),
+        ..Default::default()
+    };
+    let method = RestMethod {
+        http_method: "POST".to_string(),
+        path: "things".to_string(),
+        ..Default::default()
+    };
+    let global_params = vec![
+        ResolvedGlobalParam {
+            name: "tenant".to_string(),
+            location: GlobalParameterLocation::Header,
+            target: "X-Tenant".to_string(),
+            value: "acme".to_string(),
+        },
+        ResolvedGlobalParam {
+            name: "version".to_string(),
+            location: GlobalParameterLocation::Query,
+            target: "version".to_string(),
+            value: "v2".to_string(),
+        },
+        ResolvedGlobalParam {
+            name: "currency".to_string(),
+            location: GlobalParameterLocation::Body,
+            target: "currency".to_string(),
+            value: "EUR".to_string(),
+        },
+    ];
+    let input =
+        parse_and_validate_inputs(&doc, &method, None, None, false, None, &[], &global_params)
+            .unwrap();
+    assert_eq!(input.header_params.len(), 1);
+    assert_eq!(input.header_params[0].0, "X-Tenant");
+    assert!(
+        input.query_params.iter().any(|(k, v)| k == "version" && v == "v2"),
+        "query param should appear in query_params: {:?}",
+        input.query_params
+    );
+    let body = input.body.expect("body should have currency");
+    assert_eq!(body["currency"], "EUR");
 }

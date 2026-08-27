@@ -1,5 +1,5 @@
 [workspace]
-members = ["cargo:.", "cargo:crates/pipeline-fixture", "agentmail-types", "agentmail-sdk"]
+members = ["cargo:.", "cargo:agentmail-types", "cargo:agentmail-sdk"]
 
 # Config for 'dist'
 [dist]
@@ -13,7 +13,7 @@ ci = "github"
 # musl builds.
 precise-builds = true
 # The installers to generate for each app
-installers = ["shell", "powershell", "npm"]
+installers = ["shell", "powershell"]
 # Whether to enable GitHub Attestations
 github-attestations = true
 # Target platforms to build apps for (Rust target-triple syntax)
@@ -32,3 +32,5 @@ unix-archive = ".tar.gz"
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+default-features = false
+features = ["rustls"]

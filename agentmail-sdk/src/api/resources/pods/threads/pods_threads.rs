@@ -20,7 +20,7 @@ impl ThreadsClient3 {
     ///
     /// **CLI:**
     /// ```bash
-    /// agentmail pods:threads list --pod-id <pod_id>
+    /// agentmail pods threads list --pod-id <pod_id>
     /// ```
     ///
     /// # Arguments
@@ -33,6 +33,44 @@ impl ThreadsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .threads
+    ///         .list(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &PodsThreadsListQueryRequest {
+    ///                 limit: None,
+    ///                 page_token: None,
+    ///                 labels: vec![],
+    ///                 before: None,
+    ///                 after: None,
+    ///                 ascending: None,
+    ///                 include_spam: None,
+    ///                 include_blocked: None,
+    ///                 include_unauthenticated: None,
+    ///                 include_trash: None,
+    ///                 senders: None,
+    ///                 recipients: None,
+    ///                 subject: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         pod_id: &PodsPodId,
@@ -79,6 +117,36 @@ impl ThreadsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .threads
+    ///         .search(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &PodsThreadsSearchQueryRequest {
+    ///                 q: Query("q".to_string()),
+    ///                 limit: None,
+    ///                 page_token: None,
+    ///                 before: None,
+    ///                 after: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn search(
         &self,
         pod_id: &PodsPodId,
@@ -104,7 +172,7 @@ impl ThreadsClient3 {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail pods:threads get --pod-id <pod_id> --thread-id <thread_id>
+    /// agentmail pods threads get --pod-id <pod_id> --thread-id <thread_id>
     /// ```
     ///
     /// # Arguments
@@ -114,6 +182,30 @@ impl ThreadsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .threads
+    ///         .get(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &ThreadID("thread_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get(
         &self,
         pod_id: &PodsPodId,
@@ -131,26 +223,48 @@ impl ThreadsClient3 {
             .await
     }
 
-    /// Moves the thread to trash by adding a trash label to all messages. If the thread is already in trash, it will be permanently deleted. Use `permanent=true` to force permanent deletion.
+    /// Permanently deletes a thread and all of its messages.
     ///
     /// **CLI:**
     /// ```bash
-    /// agentmail pods:threads delete --pod-id <pod_id> --thread-id <thread_id>
+    /// agentmail pods threads delete --pod-id <pod_id> --thread-id <thread_id>
     /// ```
     ///
     /// # Arguments
     ///
-    /// * `permanent` - If true, permanently delete the thread instead of moving to trash.
     /// * `options` - Additional request options such as headers, timeout, etc.
     ///
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .threads
+    ///         .delete(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &ThreadID("thread_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         pod_id: &PodsPodId,
         thread_id: &ThreadId,
-        request: &PodsThreadsDeleteQueryRequest,
         options: Option<RequestOptions>,
     ) -> Result<(), ApiError> {
         self.http_client
@@ -158,9 +272,7 @@ impl ThreadsClient3 {
                 Method::DELETE,
                 &format!("v0/pods/{}/threads/{}", pod_id.0, thread_id.0),
                 None,
-                QueryBuilder::new()
-                    .serialize("permanent", request.permanent.clone())
-                    .build(),
+                None,
                 options,
             )
             .await
@@ -175,6 +287,33 @@ impl ThreadsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .threads
+    ///         .update(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &ThreadID("thread_id".to_string()),
+    ///             &UpdateThreadRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn update(
         &self,
         pod_id: &PodsPodId,
@@ -195,7 +334,7 @@ impl ThreadsClient3 {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail pods:threads get-attachment --pod-id <pod_id> --thread-id <thread_id> --attachment-id <attachment_id>
+    /// agentmail pods threads get-attachment --pod-id <pod_id> --thread-id <thread_id> --attachment-id <attachment_id>
     /// ```
     ///
     /// # Arguments
@@ -205,6 +344,31 @@ impl ThreadsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .threads
+    ///         .get_attachment(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &ThreadID("thread_id".to_string()),
+    ///             &AttachmentID("attachment_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get_attachment(
         &self,
         pod_id: &PodsPodId,

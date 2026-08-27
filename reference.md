@@ -94,6 +94,19 @@ agentmail api-keys create --name "My Key"
 |------|------|----------|-------------|
 | `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
 
+#### `agentmail api-keys create-public-key`
+
+Register a public P-256 JWK using an existing AgentMail bearer API key
+with `api_key_create`. Re-registering the same JWK creates a new
+credential ID; it does not replace or recover an earlier credential.
+The private key must never be sent to AgentMail.
+
+`POST /v0/api-keys/public-keys`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
+
 #### `agentmail api-keys delete`
 
 **CLI:**
@@ -121,6 +134,62 @@ agentmail api-keys list
 | `--limit` | `Limit` | No |  |
 | `--page-token` | `PageToken` | No |  |
 | `--ascending` | `Ascending` | No |  |
+
+#### `agentmail api-keys list-public-keys`
+
+List only public-key credentials visible to the bearer caller's scope.
+Bearer credentials are never returned, even though both credential types
+share storage and pagination indexes. Requires `api_key_read`.
+
+`GET /v0/api-keys/public-keys`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--limit` | `Limit` | No |  |
+| `--page-token` | `PageToken` | No |  |
+| `--ascending` | `Ascending` | No |  |
+
+#### `agentmail api-keys revoke-all-agent-id-sign-in-keys`
+
+Invalidate every current public-key credential in the caller's
+organization by advancing its AgentID key generation. The caller must be
+organization-scoped and either have `api_key_delete` or, for a verified
+self-serve agent organization, use an unrestricted unmanaged bearer
+credential. No request body is accepted.
+
+`Idempotency-Key` is required and must be a UUID. Reusing the same UUID
+returns the original permanent receipt without advancing the generation
+again. A new UUID performs a new generation advance.
+
+`POST /v0/api-keys/public-keys/agentid-sign-in/revoke-all`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--idempotency-key` | `string (uuid)` | Yes | Required UUID identifying this revoke-all operation permanently. |
+
+#### `agentmail api-keys revoke-public-key`
+
+Permanently revoke one public-key credential. This hard-deletes the
+credential; repeating the request returns not found. Requires
+`api_key_delete`.
+
+`DELETE /v0/api-keys/public-keys/{api_key_id}`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--api-key-id` | `string (uuid)` | Yes | Public-key credential ID returned by registration. |
+
+#### `agentmail api-keys update-public-key-name`
+
+Rename the credential. All security-relevant fields are immutable.
+Requires `api_key_update`.
+
+`PATCH /v0/api-keys/public-keys/{api_key_id}`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--api-key-id` | `string (uuid)` | Yes | Public-key credential ID returned by registration. |
+| `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
 
 ---
 
@@ -364,7 +433,7 @@ agentmail inboxes update --inbox-id <inbox_id> --display-name "Updated Name"
 
 **CLI:**
 ```bash
-agentmail inboxes:api-keys create --inbox-id <inbox_id> --name "My Key"
+agentmail inboxes api-keys create --inbox-id <inbox_id> --name "My Key"
 ```
 
 `POST /v0/inboxes/{inbox_id}/api-keys`
@@ -378,7 +447,7 @@ agentmail inboxes:api-keys create --inbox-id <inbox_id> --name "My Key"
 
 **CLI:**
 ```bash
-agentmail inboxes:api-keys delete --inbox-id <inbox_id> --api-key-id <api_key_id>
+agentmail inboxes api-keys delete --inbox-id <inbox_id> --api-key-id <api_key_id>
 ```
 
 `DELETE /v0/inboxes/{inbox_id}/api-keys/{api_key_id}`
@@ -392,7 +461,7 @@ agentmail inboxes:api-keys delete --inbox-id <inbox_id> --api-key-id <api_key_id
 
 **CLI:**
 ```bash
-agentmail inboxes:api-keys list --inbox-id <inbox_id>
+agentmail inboxes api-keys list --inbox-id <inbox_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/api-keys`
@@ -409,9 +478,15 @@ agentmail inboxes:api-keys list --inbox-id <inbox_id>
 
 #### `agentmail inboxes drafts create`
 
+Create a draft. Supply `in_reply_to` to create a reply draft (with
+`reply_all` to address the whole thread), whose recipients, subject, and
+threading are derived from the referenced message, or `forward_of` to
+create a forward draft, which derives the subject, threading, and
+forwarded content from the source but keeps recipients caller-supplied.
+
 **CLI:**
 ```bash
-agentmail inboxes:drafts create --inbox-id <inbox_id> --to recipient@example.com --subject "Draft subject" --text "Draft body"
+agentmail inboxes drafts create --inbox-id <inbox_id> --to recipient@example.com --subject "Draft subject" --text "Draft body"
 ```
 
 `POST /v0/inboxes/{inbox_id}/drafts`
@@ -425,7 +500,7 @@ agentmail inboxes:drafts create --inbox-id <inbox_id> --to recipient@example.com
 
 **CLI:**
 ```bash
-agentmail inboxes:drafts delete --inbox-id <inbox_id> --draft-id <draft_id>
+agentmail inboxes drafts delete --inbox-id <inbox_id> --draft-id <draft_id>
 ```
 
 `DELETE /v0/inboxes/{inbox_id}/drafts/{draft_id}`
@@ -439,7 +514,7 @@ agentmail inboxes:drafts delete --inbox-id <inbox_id> --draft-id <draft_id>
 
 **CLI:**
 ```bash
-agentmail inboxes:drafts get --inbox-id <inbox_id> --draft-id <draft_id>
+agentmail inboxes drafts get --inbox-id <inbox_id> --draft-id <draft_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/drafts/{draft_id}`
@@ -453,7 +528,7 @@ agentmail inboxes:drafts get --inbox-id <inbox_id> --draft-id <draft_id>
 
 **CLI:**
 ```bash
-agentmail inboxes:drafts get-attachment --inbox-id <inbox_id> --draft-id <draft_id> --attachment-id <attachment_id>
+agentmail inboxes drafts get-attachment --inbox-id <inbox_id> --draft-id <draft_id> --attachment-id <attachment_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/drafts/{draft_id}/attachments/{attachment_id}`
@@ -468,7 +543,7 @@ agentmail inboxes:drafts get-attachment --inbox-id <inbox_id> --draft-id <draft_
 
 **CLI:**
 ```bash
-agentmail inboxes:drafts list --inbox-id <inbox_id>
+agentmail inboxes drafts list --inbox-id <inbox_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/drafts`
@@ -487,7 +562,7 @@ agentmail inboxes:drafts list --inbox-id <inbox_id>
 
 **CLI:**
 ```bash
-agentmail inboxes:drafts send --inbox-id <inbox_id> --draft-id <draft_id>
+agentmail inboxes drafts send --inbox-id <inbox_id> --draft-id <draft_id>
 ```
 
 `POST /v0/inboxes/{inbox_id}/drafts/{draft_id}/send`
@@ -496,13 +571,18 @@ agentmail inboxes:drafts send --inbox-id <inbox_id> --draft-id <draft_id>
 |------|------|----------|-------------|
 | `--inbox-id` | `inboxesInboxId` | Yes |  |
 | `--draft-id` | `DraftId` | Yes |  |
+| `--idempotency-key` | `string` | No | Unique key that makes a send idempotent. A retry carrying the same key returns the original message instead of sending a second email; reusing a key with a different request returns a 409 conflict. Keys expire 24 hours after the send completes. |
 | `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
 
 #### `agentmail inboxes drafts update`
 
+Edit fields on an existing draft. Passing `null` clears a field (or `[]`
+for a recipient field); `send_at: null` un-schedules a scheduled draft.
+A draft that is already being sent cannot be edited.
+
 **CLI:**
 ```bash
-agentmail inboxes:drafts update --inbox-id <inbox_id> --draft-id <draft_id> --subject "Updated subject"
+agentmail inboxes drafts update --inbox-id <inbox_id> --draft-id <draft_id> --subject "Updated subject"
 ```
 
 `PATCH /v0/inboxes/{inbox_id}/drafts/{draft_id}`
@@ -523,7 +603,7 @@ List label change events for an inbox. Returns events in reverse chronological o
 
 **CLI:**
 ```bash
-agentmail inboxes:events list --inbox-id <inbox_id>
+agentmail inboxes events list --inbox-id <inbox_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/events`
@@ -543,7 +623,7 @@ agentmail inboxes:events list --inbox-id <inbox_id>
 
 **CLI:**
 ```bash
-agentmail inboxes:lists create --inbox-id <inbox_id> --direction <direction> --type <type> --entry user@example.com
+agentmail inboxes lists create --inbox-id <inbox_id> --direction <direction> --type <type> --entry user@example.com
 ```
 
 `POST /v0/inboxes/{inbox_id}/lists/{direction}/{type}`
@@ -559,7 +639,7 @@ agentmail inboxes:lists create --inbox-id <inbox_id> --direction <direction> --t
 
 **CLI:**
 ```bash
-agentmail inboxes:lists delete --inbox-id <inbox_id> --direction <direction> --type <type> --entry <entry>
+agentmail inboxes lists delete --inbox-id <inbox_id> --direction <direction> --type <type> --entry <entry>
 ```
 
 `DELETE /v0/inboxes/{inbox_id}/lists/{direction}/{type}/{entry}`
@@ -575,7 +655,7 @@ agentmail inboxes:lists delete --inbox-id <inbox_id> --direction <direction> --t
 
 **CLI:**
 ```bash
-agentmail inboxes:lists get --inbox-id <inbox_id> --direction <direction> --type <type> --entry <entry>
+agentmail inboxes lists get --inbox-id <inbox_id> --direction <direction> --type <type> --entry <entry>
 ```
 
 `GET /v0/inboxes/{inbox_id}/lists/{direction}/{type}/{entry}`
@@ -591,7 +671,7 @@ agentmail inboxes:lists get --inbox-id <inbox_id> --direction <direction> --type
 
 **CLI:**
 ```bash
-agentmail inboxes:lists list --inbox-id <inbox_id> --direction <direction> --type <type>
+agentmail inboxes lists list --inbox-id <inbox_id> --direction <direction> --type <type>
 ```
 
 `GET /v0/inboxes/{inbox_id}/lists/{direction}/{type}`
@@ -616,7 +696,7 @@ to detect misses.
 
 **CLI:**
 ```bash
-agentmail inboxes:messages batch-get --inbox-id <inbox_id> --message-id <id1> --message-id <id2>
+agentmail inboxes messages batch-get --inbox-id <inbox_id> --message-ids <id1> --message-ids <id2>
 ```
 
 `POST /v0/inboxes/{inbox_id}/messages/batch-get`
@@ -637,7 +717,7 @@ exclusions.
 
 **CLI:**
 ```bash
-agentmail inboxes:messages batch-update --inbox-id <inbox_id> --message-id <id1> --message-id <id2> --add-label read --remove-label unread
+agentmail inboxes messages batch-update --inbox-id <inbox_id> --message-ids <id1> --message-ids <id2> --add-labels read --remove-labels unread
 ```
 
 `POST /v0/inboxes/{inbox_id}/messages/batch-update`
@@ -653,7 +733,7 @@ Permanently deletes a message.
 
 **CLI:**
 ```bash
-agentmail inboxes:messages delete --inbox-id <inbox_id> --message-id <message_id>
+agentmail inboxes messages delete --inbox-id <inbox_id> --message-id <message_id>
 ```
 
 `DELETE /v0/inboxes/{inbox_id}/messages/{message_id}`
@@ -663,68 +743,11 @@ agentmail inboxes:messages delete --inbox-id <inbox_id> --message-id <message_id
 | `--inbox-id` | `inboxesInboxId` | Yes |  |
 | `--message-id` | `MessageId` | Yes |  |
 
-#### `agentmail inboxes messages draft-forward`
-
-Create a draft that forwards a message instead of sending it. The subject
-and threading are derived from the source message, whose body and
-attachments are merged in at send time. Send it later with `Send Draft`.
-
-**CLI:**
-```bash
-agentmail inboxes:messages draft-forward --inbox-id <inbox_id> --message-id <message_id> --to recipient@example.com
-```
-
-`POST /v0/inboxes/{inbox_id}/messages/{message_id}/draft-forward`
-
-| Flag | Type | Required | Description |
-|------|------|----------|-------------|
-| `--inbox-id` | `inboxesInboxId` | Yes |  |
-| `--message-id` | `MessageId` | Yes |  |
-| `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
-
-#### `agentmail inboxes messages draft-reply`
-
-Create a draft that replies to a message instead of sending it. The
-recipients, subject, and threading are derived from the source message.
-Send it later with `Send Draft`.
-
-**CLI:**
-```bash
-agentmail inboxes:messages draft-reply --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
-```
-
-`POST /v0/inboxes/{inbox_id}/messages/{message_id}/draft-reply`
-
-| Flag | Type | Required | Description |
-|------|------|----------|-------------|
-| `--inbox-id` | `inboxesInboxId` | Yes |  |
-| `--message-id` | `MessageId` | Yes |  |
-| `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
-
-#### `agentmail inboxes messages draft-reply-all`
-
-Create a draft that replies to every recipient of a message instead of
-sending it. Recipients, subject, and threading are derived from the
-source message. Send it later with `Send Draft`.
-
-**CLI:**
-```bash
-agentmail inboxes:messages draft-reply-all --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
-```
-
-`POST /v0/inboxes/{inbox_id}/messages/{message_id}/draft-reply-all`
-
-| Flag | Type | Required | Description |
-|------|------|----------|-------------|
-| `--inbox-id` | `inboxesInboxId` | Yes |  |
-| `--message-id` | `MessageId` | Yes |  |
-| `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
-
 #### `agentmail inboxes messages forward`
 
 **CLI:**
 ```bash
-agentmail inboxes:messages forward --inbox-id <inbox_id> --message-id <message_id> --to recipient@example.com
+agentmail inboxes messages forward --inbox-id <inbox_id> --message-id <message_id> --to recipient@example.com
 ```
 
 `POST /v0/inboxes/{inbox_id}/messages/{message_id}/forward`
@@ -733,13 +756,14 @@ agentmail inboxes:messages forward --inbox-id <inbox_id> --message-id <message_i
 |------|------|----------|-------------|
 | `--inbox-id` | `inboxesInboxId` | Yes |  |
 | `--message-id` | `MessageId` | Yes |  |
+| `--idempotency-key` | `string` | No | Unique key that makes a send idempotent. A retry carrying the same key returns the original message instead of sending a second email; reusing a key with a different request returns a 409 conflict. Keys expire 24 hours after the send completes. |
 | `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
 
 #### `agentmail inboxes messages get`
 
 **CLI:**
 ```bash
-agentmail inboxes:messages get --inbox-id <inbox_id> --message-id <message_id>
+agentmail inboxes messages get --inbox-id <inbox_id> --message-id <message_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/messages/{message_id}`
@@ -753,7 +777,7 @@ agentmail inboxes:messages get --inbox-id <inbox_id> --message-id <message_id>
 
 **CLI:**
 ```bash
-agentmail inboxes:messages get-attachment --inbox-id <inbox_id> --message-id <message_id> --attachment-id <attachment_id>
+agentmail inboxes messages get-attachment --inbox-id <inbox_id> --message-id <message_id> --attachment-id <attachment_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/messages/{message_id}/attachments/{attachment_id}`
@@ -768,7 +792,7 @@ agentmail inboxes:messages get-attachment --inbox-id <inbox_id> --message-id <me
 
 **CLI:**
 ```bash
-agentmail inboxes:messages get-raw --inbox-id <inbox_id> --message-id <message_id>
+agentmail inboxes messages get-raw --inbox-id <inbox_id> --message-id <message_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/messages/{message_id}/raw`
@@ -788,7 +812,7 @@ search across sender, recipients, subject, and message body, use
 
 **CLI:**
 ```bash
-agentmail inboxes:messages list --inbox-id <inbox_id>
+agentmail inboxes messages list --inbox-id <inbox_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/messages`
@@ -814,7 +838,7 @@ agentmail inboxes:messages list --inbox-id <inbox_id>
 
 **CLI:**
 ```bash
-agentmail inboxes:messages reply --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
+agentmail inboxes messages reply --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
 ```
 
 `POST /v0/inboxes/{inbox_id}/messages/{message_id}/reply`
@@ -823,13 +847,14 @@ agentmail inboxes:messages reply --inbox-id <inbox_id> --message-id <message_id>
 |------|------|----------|-------------|
 | `--inbox-id` | `inboxesInboxId` | Yes |  |
 | `--message-id` | `MessageId` | Yes |  |
+| `--idempotency-key` | `string` | No | Unique key that makes a send idempotent. A retry carrying the same key returns the original message instead of sending a second email; reusing a key with a different request returns a 409 conflict. Keys expire 24 hours after the send completes. |
 | `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
 
 #### `agentmail inboxes messages reply-all`
 
 **CLI:**
 ```bash
-agentmail inboxes:messages reply-all --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
+agentmail inboxes messages reply-all --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
 ```
 
 `POST /v0/inboxes/{inbox_id}/messages/{message_id}/reply-all`
@@ -838,6 +863,7 @@ agentmail inboxes:messages reply-all --inbox-id <inbox_id> --message-id <message
 |------|------|----------|-------------|
 | `--inbox-id` | `inboxesInboxId` | Yes |  |
 | `--message-id` | `MessageId` | Yes |  |
+| `--idempotency-key` | `string` | No | Unique key that makes a send idempotent. A retry carrying the same key returns the original message instead of sending a second email; reusing a key with a different request returns a 409 conflict. Keys expire 24 hours after the send completes. |
 | `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
 
 #### `agentmail inboxes messages search`
@@ -862,7 +888,7 @@ unauthenticated messages are always excluded. `limit` cannot exceed 100.
 
 **CLI:**
 ```bash
-agentmail inboxes:messages send --inbox-id <inbox_id> --to recipient@example.com --subject "Hello" --text "Body"
+agentmail inboxes messages send --inbox-id <inbox_id> --to recipient@example.com --subject "Hello" --text "Body"
 ```
 
 `POST /v0/inboxes/{inbox_id}/messages/send`
@@ -870,13 +896,14 @@ agentmail inboxes:messages send --inbox-id <inbox_id> --to recipient@example.com
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|
 | `--inbox-id` | `inboxesInboxId` | Yes |  |
+| `--idempotency-key` | `string` | No | Unique key that makes a send idempotent. A retry carrying the same key returns the original message instead of sending a second email; reusing a key with a different request returns a 409 conflict. Keys expire 24 hours after the send completes. |
 | `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
 
 #### `agentmail inboxes messages update`
 
 **CLI:**
 ```bash
-agentmail inboxes:messages update --inbox-id <inbox_id> --message-id <message_id> --add-label read --remove-label unread
+agentmail inboxes messages update --inbox-id <inbox_id> --message-id <message_id> --add-labels read --remove-labels unread
 ```
 
 `PATCH /v0/inboxes/{inbox_id}/messages/{message_id}`
@@ -901,7 +928,7 @@ many seconds.
 
 **CLI:**
 ```bash
-agentmail inboxes:metrics query --inbox-id <inbox_id>
+agentmail inboxes metrics query-events --inbox-id <inbox_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/metrics/events`
@@ -944,11 +971,11 @@ by `period` must not exceed 1000 buckets.
 
 #### `agentmail inboxes threads delete`
 
-Moves the thread to trash by adding a trash label to all messages. If the thread is already in trash, it will be permanently deleted. Use `permanent=true` to force permanent deletion.
+Permanently deletes a thread and all of its messages.
 
 **CLI:**
 ```bash
-agentmail inboxes:threads delete --inbox-id <inbox_id> --thread-id <thread_id>
+agentmail inboxes threads delete --inbox-id <inbox_id> --thread-id <thread_id>
 ```
 
 `DELETE /v0/inboxes/{inbox_id}/threads/{thread_id}`
@@ -957,13 +984,12 @@ agentmail inboxes:threads delete --inbox-id <inbox_id> --thread-id <thread_id>
 |------|------|----------|-------------|
 | `--inbox-id` | `inboxesInboxId` | Yes |  |
 | `--thread-id` | `ThreadId` | Yes |  |
-| `--permanent` | `boolean` | No | If true, permanently delete the thread instead of moving to trash. |
 
 #### `agentmail inboxes threads get`
 
 **CLI:**
 ```bash
-agentmail inboxes:threads get --inbox-id <inbox_id> --thread-id <thread_id>
+agentmail inboxes threads get --inbox-id <inbox_id> --thread-id <thread_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/threads/{thread_id}`
@@ -977,7 +1003,7 @@ agentmail inboxes:threads get --inbox-id <inbox_id> --thread-id <thread_id>
 
 **CLI:**
 ```bash
-agentmail inboxes:threads get-attachment --inbox-id <inbox_id> --thread-id <thread_id> --attachment-id <attachment_id>
+agentmail inboxes threads get-attachment --inbox-id <inbox_id> --thread-id <thread_id> --attachment-id <attachment_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/threads/{thread_id}/attachments/{attachment_id}`
@@ -997,7 +1023,7 @@ full-text search, use `Search Threads`.
 
 **CLI:**
 ```bash
-agentmail inboxes:threads list --inbox-id <inbox_id>
+agentmail inboxes threads list --inbox-id <inbox_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/threads`
@@ -1059,7 +1085,7 @@ Create a webhook scoped to this inbox.
 
 **CLI:**
 ```bash
-agentmail inboxes:webhooks create --inbox-id <inbox_id> --url https://example.com/webhook --event-type message.received
+agentmail inboxes webhooks create --inbox-id <inbox_id> --url https://example.com/webhook --event-types message.received
 ```
 
 `POST /v0/inboxes/{inbox_id}/webhooks`
@@ -1073,7 +1099,7 @@ agentmail inboxes:webhooks create --inbox-id <inbox_id> --url https://example.co
 
 **CLI:**
 ```bash
-agentmail inboxes:webhooks delete --inbox-id <inbox_id> --webhook-id <webhook_id>
+agentmail inboxes webhooks delete --inbox-id <inbox_id> --webhook-id <webhook_id>
 ```
 
 `DELETE /v0/inboxes/{inbox_id}/webhooks/{webhook_id}`
@@ -1087,10 +1113,22 @@ agentmail inboxes:webhooks delete --inbox-id <inbox_id> --webhook-id <webhook_id
 
 **CLI:**
 ```bash
-agentmail inboxes:webhooks get --inbox-id <inbox_id> --webhook-id <webhook_id>
+agentmail inboxes webhooks get --inbox-id <inbox_id> --webhook-id <webhook_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/webhooks/{webhook_id}`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--inbox-id` | `inboxesInboxId` | Yes |  |
+| `--webhook-id` | `webhooksWebhookId` | Yes |  |
+
+#### `agentmail inboxes webhooks get-headers`
+
+List the names of custom HTTP headers included with deliveries to this inbox-scoped webhook.
+Header values are write-only and are never returned.
+
+`GET /v0/inboxes/{inbox_id}/webhooks/{webhook_id}/headers`
 
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|
@@ -1101,7 +1139,7 @@ agentmail inboxes:webhooks get --inbox-id <inbox_id> --webhook-id <webhook_id>
 
 **CLI:**
 ```bash
-agentmail inboxes:webhooks list --inbox-id <inbox_id>
+agentmail inboxes webhooks list --inbox-id <inbox_id>
 ```
 
 `GET /v0/inboxes/{inbox_id}/webhooks`
@@ -1117,10 +1155,23 @@ agentmail inboxes:webhooks list --inbox-id <inbox_id>
 
 **CLI:**
 ```bash
-agentmail inboxes:webhooks update --inbox-id <inbox_id> --webhook-id <webhook_id> --event-type message.received
+agentmail inboxes webhooks update --inbox-id <inbox_id> --webhook-id <webhook_id> --event-types message.received
 ```
 
 `PATCH /v0/inboxes/{inbox_id}/webhooks/{webhook_id}`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--inbox-id` | `inboxesInboxId` | Yes |  |
+| `--webhook-id` | `webhooksWebhookId` | Yes |  |
+| `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
+
+#### `agentmail inboxes webhooks update-headers`
+
+Atomically set, replace, or remove custom HTTP headers included with deliveries to this
+inbox-scoped webhook. Header values remain write-only.
+
+`PATCH /v0/inboxes/{inbox_id}/webhooks/{webhook_id}/headers`
 
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|
@@ -1207,7 +1258,7 @@ that many seconds.
 
 **CLI:**
 ```bash
-agentmail metrics list
+agentmail metrics query-events
 ```
 
 `GET /v0/metrics/events`
@@ -1321,7 +1372,7 @@ agentmail pods list
 
 **CLI:**
 ```bash
-agentmail pods:api-keys create --pod-id <pod_id> --name "My Key"
+agentmail pods api-keys create --pod-id <pod_id> --name "My Key"
 ```
 
 `POST /v0/pods/{pod_id}/api-keys`
@@ -1335,7 +1386,7 @@ agentmail pods:api-keys create --pod-id <pod_id> --name "My Key"
 
 **CLI:**
 ```bash
-agentmail pods:api-keys delete --pod-id <pod_id> --api-key-id <api_key_id>
+agentmail pods api-keys delete --pod-id <pod_id> --api-key-id <api_key_id>
 ```
 
 `DELETE /v0/pods/{pod_id}/api-keys/{api_key_id}`
@@ -1349,7 +1400,7 @@ agentmail pods:api-keys delete --pod-id <pod_id> --api-key-id <api_key_id>
 
 **CLI:**
 ```bash
-agentmail pods:api-keys list --pod-id <pod_id>
+agentmail pods api-keys list --pod-id <pod_id>
 ```
 
 `GET /v0/pods/{pod_id}/api-keys`
@@ -1368,7 +1419,7 @@ agentmail pods:api-keys list --pod-id <pod_id>
 
 **CLI:**
 ```bash
-agentmail pods:domains create --pod-id <pod_id> --domain example.com
+agentmail pods domains create --pod-id <pod_id> --domain example.com
 ```
 
 `POST /v0/pods/{pod_id}/domains`
@@ -1382,7 +1433,7 @@ agentmail pods:domains create --pod-id <pod_id> --domain example.com
 
 **CLI:**
 ```bash
-agentmail pods:domains delete --pod-id <pod_id> --domain-id <domain_id>
+agentmail pods domains delete --pod-id <pod_id> --domain-id <domain_id>
 ```
 
 `DELETE /v0/pods/{pod_id}/domains/{domain_id}`
@@ -1396,7 +1447,7 @@ agentmail pods:domains delete --pod-id <pod_id> --domain-id <domain_id>
 
 **CLI:**
 ```bash
-agentmail pods:domains get --pod-id <pod_id> --domain-id <domain_id>
+agentmail pods domains get --pod-id <pod_id> --domain-id <domain_id>
 ```
 
 `GET /v0/pods/{pod_id}/domains/{domain_id}`
@@ -1410,7 +1461,7 @@ agentmail pods:domains get --pod-id <pod_id> --domain-id <domain_id>
 
 **CLI:**
 ```bash
-agentmail pods:domains get-zone-file --pod-id <pod_id> --domain-id <domain_id>
+agentmail pods domains get-zone-file --pod-id <pod_id> --domain-id <domain_id>
 ```
 
 `GET /v0/pods/{pod_id}/domains/{domain_id}/zone-file`
@@ -1424,7 +1475,7 @@ agentmail pods:domains get-zone-file --pod-id <pod_id> --domain-id <domain_id>
 
 **CLI:**
 ```bash
-agentmail pods:domains list --pod-id <pod_id>
+agentmail pods domains list --pod-id <pod_id>
 ```
 
 `GET /v0/pods/{pod_id}/domains`
@@ -1440,7 +1491,7 @@ agentmail pods:domains list --pod-id <pod_id>
 
 **CLI:**
 ```bash
-agentmail pods:domains update --pod-id <pod_id> --domain-id <domain_id>
+agentmail pods domains update --pod-id <pod_id> --domain-id <domain_id>
 ```
 
 `PATCH /v0/pods/{pod_id}/domains/{domain_id}`
@@ -1455,7 +1506,7 @@ agentmail pods:domains update --pod-id <pod_id> --domain-id <domain_id>
 
 **CLI:**
 ```bash
-agentmail pods:domains verify --pod-id <pod_id> --domain-id <domain_id>
+agentmail pods domains verify --pod-id <pod_id> --domain-id <domain_id>
 ```
 
 `POST /v0/pods/{pod_id}/domains/{domain_id}/verify`
@@ -1473,7 +1524,7 @@ agentmail pods:domains verify --pod-id <pod_id> --domain-id <domain_id>
 
 **CLI:**
 ```bash
-agentmail pods:drafts get --pod-id <pod_id> --draft-id <draft_id>
+agentmail pods drafts get --pod-id <pod_id> --draft-id <draft_id>
 ```
 
 `GET /v0/pods/{pod_id}/drafts/{draft_id}`
@@ -1487,7 +1538,7 @@ agentmail pods:drafts get --pod-id <pod_id> --draft-id <draft_id>
 
 **CLI:**
 ```bash
-agentmail pods:drafts get-attachment --pod-id <pod_id> --draft-id <draft_id> --attachment-id <attachment_id>
+agentmail pods drafts get-attachment --pod-id <pod_id> --draft-id <draft_id> --attachment-id <attachment_id>
 ```
 
 `GET /v0/pods/{pod_id}/drafts/{draft_id}/attachments/{attachment_id}`
@@ -1502,7 +1553,7 @@ agentmail pods:drafts get-attachment --pod-id <pod_id> --draft-id <draft_id> --a
 
 **CLI:**
 ```bash
-agentmail pods:drafts list --pod-id <pod_id>
+agentmail pods drafts list --pod-id <pod_id>
 ```
 
 `GET /v0/pods/{pod_id}/drafts`
@@ -1525,7 +1576,7 @@ agentmail pods:drafts list --pod-id <pod_id>
 
 **CLI:**
 ```bash
-agentmail pods:inboxes create --pod-id <pod_id> --username myagent --domain example.com
+agentmail pods inboxes create --pod-id <pod_id> --username myagent --domain example.com
 ```
 
 `POST /v0/pods/{pod_id}/inboxes`
@@ -1539,7 +1590,7 @@ agentmail pods:inboxes create --pod-id <pod_id> --username myagent --domain exam
 
 **CLI:**
 ```bash
-agentmail pods:inboxes delete --pod-id <pod_id> --inbox-id <inbox_id>
+agentmail pods inboxes delete --pod-id <pod_id> --inbox-id <inbox_id>
 ```
 
 `DELETE /v0/pods/{pod_id}/inboxes/{inbox_id}`
@@ -1553,7 +1604,7 @@ agentmail pods:inboxes delete --pod-id <pod_id> --inbox-id <inbox_id>
 
 **CLI:**
 ```bash
-agentmail pods:inboxes get --pod-id <pod_id> --inbox-id <inbox_id>
+agentmail pods inboxes get --pod-id <pod_id> --inbox-id <inbox_id>
 ```
 
 `GET /v0/pods/{pod_id}/inboxes/{inbox_id}`
@@ -1567,7 +1618,7 @@ agentmail pods:inboxes get --pod-id <pod_id> --inbox-id <inbox_id>
 
 **CLI:**
 ```bash
-agentmail pods:inboxes list --pod-id <pod_id>
+agentmail pods inboxes list --pod-id <pod_id>
 ```
 
 `GET /v0/pods/{pod_id}/inboxes`
@@ -1583,7 +1634,7 @@ agentmail pods:inboxes list --pod-id <pod_id>
 
 **CLI:**
 ```bash
-agentmail pods:inboxes update --pod-id <pod_id> --inbox-id <inbox_id>
+agentmail pods inboxes update --pod-id <pod_id> --inbox-id <inbox_id>
 ```
 
 `PATCH /v0/pods/{pod_id}/inboxes/{inbox_id}`
@@ -1602,7 +1653,7 @@ agentmail pods:inboxes update --pod-id <pod_id> --inbox-id <inbox_id>
 
 **CLI:**
 ```bash
-agentmail pods:lists create --pod-id <pod_id> --direction <direction> --type <type> --entry user@example.com
+agentmail pods lists create --pod-id <pod_id> --direction <direction> --type <type> --entry user@example.com
 ```
 
 `POST /v0/pods/{pod_id}/lists/{direction}/{type}`
@@ -1618,7 +1669,7 @@ agentmail pods:lists create --pod-id <pod_id> --direction <direction> --type <ty
 
 **CLI:**
 ```bash
-agentmail pods:lists delete --pod-id <pod_id> --direction <direction> --type <type> --entry <entry>
+agentmail pods lists delete --pod-id <pod_id> --direction <direction> --type <type> --entry <entry>
 ```
 
 `DELETE /v0/pods/{pod_id}/lists/{direction}/{type}/{entry}`
@@ -1634,7 +1685,7 @@ agentmail pods:lists delete --pod-id <pod_id> --direction <direction> --type <ty
 
 **CLI:**
 ```bash
-agentmail pods:lists get --pod-id <pod_id> --direction <direction> --type <type> --entry <entry>
+agentmail pods lists get --pod-id <pod_id> --direction <direction> --type <type> --entry <entry>
 ```
 
 `GET /v0/pods/{pod_id}/lists/{direction}/{type}/{entry}`
@@ -1650,7 +1701,7 @@ agentmail pods:lists get --pod-id <pod_id> --direction <direction> --type <type>
 
 **CLI:**
 ```bash
-agentmail pods:lists list --pod-id <pod_id> --direction <direction> --type <type>
+agentmail pods lists list --pod-id <pod_id> --direction <direction> --type <type>
 ```
 
 `GET /v0/pods/{pod_id}/lists/{direction}/{type}`
@@ -1677,7 +1728,7 @@ many seconds.
 
 **CLI:**
 ```bash
-agentmail pods:metrics query --pod-id <pod_id>
+agentmail pods metrics query-events --pod-id <pod_id>
 ```
 
 `GET /v0/pods/{pod_id}/metrics/events`
@@ -1720,11 +1771,11 @@ buckets.
 
 #### `agentmail pods threads delete`
 
-Moves the thread to trash by adding a trash label to all messages. If the thread is already in trash, it will be permanently deleted. Use `permanent=true` to force permanent deletion.
+Permanently deletes a thread and all of its messages.
 
 **CLI:**
 ```bash
-agentmail pods:threads delete --pod-id <pod_id> --thread-id <thread_id>
+agentmail pods threads delete --pod-id <pod_id> --thread-id <thread_id>
 ```
 
 `DELETE /v0/pods/{pod_id}/threads/{thread_id}`
@@ -1733,13 +1784,12 @@ agentmail pods:threads delete --pod-id <pod_id> --thread-id <thread_id>
 |------|------|----------|-------------|
 | `--pod-id` | `podsPodId` | Yes |  |
 | `--thread-id` | `ThreadId` | Yes |  |
-| `--permanent` | `boolean` | No | If true, permanently delete the thread instead of moving to trash. |
 
 #### `agentmail pods threads get`
 
 **CLI:**
 ```bash
-agentmail pods:threads get --pod-id <pod_id> --thread-id <thread_id>
+agentmail pods threads get --pod-id <pod_id> --thread-id <thread_id>
 ```
 
 `GET /v0/pods/{pod_id}/threads/{thread_id}`
@@ -1753,7 +1803,7 @@ agentmail pods:threads get --pod-id <pod_id> --thread-id <thread_id>
 
 **CLI:**
 ```bash
-agentmail pods:threads get-attachment --pod-id <pod_id> --thread-id <thread_id> --attachment-id <attachment_id>
+agentmail pods threads get-attachment --pod-id <pod_id> --thread-id <thread_id> --attachment-id <attachment_id>
 ```
 
 `GET /v0/pods/{pod_id}/threads/{thread_id}/attachments/{attachment_id}`
@@ -1773,7 +1823,7 @@ full-text search, use `Search Threads`.
 
 **CLI:**
 ```bash
-agentmail pods:threads list --pod-id <pod_id>
+agentmail pods threads list --pod-id <pod_id>
 ```
 
 `GET /v0/pods/{pod_id}/threads`
@@ -1835,7 +1885,7 @@ Create a webhook scoped to this pod.
 
 **CLI:**
 ```bash
-agentmail pods:webhooks create --pod-id <pod_id> --url https://example.com/webhook --event-type message.received
+agentmail pods webhooks create --pod-id <pod_id> --url https://example.com/webhook --event-types message.received
 ```
 
 `POST /v0/pods/{pod_id}/webhooks`
@@ -1849,7 +1899,7 @@ agentmail pods:webhooks create --pod-id <pod_id> --url https://example.com/webho
 
 **CLI:**
 ```bash
-agentmail pods:webhooks delete --pod-id <pod_id> --webhook-id <webhook_id>
+agentmail pods webhooks delete --pod-id <pod_id> --webhook-id <webhook_id>
 ```
 
 `DELETE /v0/pods/{pod_id}/webhooks/{webhook_id}`
@@ -1863,10 +1913,22 @@ agentmail pods:webhooks delete --pod-id <pod_id> --webhook-id <webhook_id>
 
 **CLI:**
 ```bash
-agentmail pods:webhooks get --pod-id <pod_id> --webhook-id <webhook_id>
+agentmail pods webhooks get --pod-id <pod_id> --webhook-id <webhook_id>
 ```
 
 `GET /v0/pods/{pod_id}/webhooks/{webhook_id}`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--pod-id` | `podsPodId` | Yes |  |
+| `--webhook-id` | `webhooksWebhookId` | Yes |  |
+
+#### `agentmail pods webhooks get-headers`
+
+List the names of custom HTTP headers included with deliveries to this pod-scoped webhook.
+Header values are write-only and are never returned.
+
+`GET /v0/pods/{pod_id}/webhooks/{webhook_id}/headers`
 
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|
@@ -1877,7 +1939,7 @@ agentmail pods:webhooks get --pod-id <pod_id> --webhook-id <webhook_id>
 
 **CLI:**
 ```bash
-agentmail pods:webhooks list --pod-id <pod_id>
+agentmail pods webhooks list --pod-id <pod_id>
 ```
 
 `GET /v0/pods/{pod_id}/webhooks`
@@ -1893,10 +1955,23 @@ agentmail pods:webhooks list --pod-id <pod_id>
 
 **CLI:**
 ```bash
-agentmail pods:webhooks update --pod-id <pod_id> --webhook-id <webhook_id> --add-inbox-id <inbox_id>
+agentmail pods webhooks update --pod-id <pod_id> --webhook-id <webhook_id> --add-inbox-ids <inbox_id>
 ```
 
 `PATCH /v0/pods/{pod_id}/webhooks/{webhook_id}`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--pod-id` | `podsPodId` | Yes |  |
+| `--webhook-id` | `webhooksWebhookId` | Yes |  |
+| `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
+
+#### `agentmail pods webhooks update-headers`
+
+Atomically set, replace, or remove custom HTTP headers included with deliveries to this
+pod-scoped webhook. Header values remain write-only.
+
+`PATCH /v0/pods/{pod_id}/webhooks/{webhook_id}/headers`
 
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|
@@ -1910,7 +1985,7 @@ agentmail pods:webhooks update --pod-id <pod_id> --webhook-id <webhook_id> --add
 
 #### `agentmail threads delete`
 
-Moves the thread to trash by adding a trash label to all messages. If the thread is already in trash, it will be permanently deleted. Use `permanent=true` to force permanent deletion.
+Permanently deletes a thread and all of its messages.
 
 **CLI:**
 ```bash
@@ -1922,7 +1997,6 @@ agentmail threads delete --thread-id <thread_id>
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|
 | `--thread-id` | `ThreadId` | Yes |  |
-| `--permanent` | `boolean` | No | If true, permanently delete the thread instead of moving to trash. |
 
 #### `agentmail threads get`
 
@@ -2019,7 +2093,7 @@ Updates thread labels. Cannot add or remove system labels (sent, received, bounc
 
 **CLI:**
 ```bash
-agentmail webhooks create --url https://example.com/webhook --event-type message.received
+agentmail webhooks create --url https://example.com/webhook --event-types message.received
 ```
 
 `POST /v0/webhooks`
@@ -2054,6 +2128,17 @@ agentmail webhooks get --webhook-id <webhook_id>
 |------|------|----------|-------------|
 | `--webhook-id` | `webhooksWebhookId` | Yes |  |
 
+#### `agentmail webhooks get-headers`
+
+List the names of custom HTTP headers included with deliveries to this webhook. Header values are
+write-only and are never returned.
+
+`GET /v0/webhooks/{webhook_id}/headers`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--webhook-id` | `webhooksWebhookId` | Yes |  |
+
 #### `agentmail webhooks list`
 
 **CLI:**
@@ -2076,10 +2161,22 @@ non-empty `event_types` array (see request field docs). Inbox and pod changes us
 
 **CLI:**
 ```bash
-agentmail webhooks update --webhook-id <webhook_id> --add-inbox-id <inbox_id>
+agentmail webhooks update --webhook-id <webhook_id> --add-inbox-ids <inbox_id>
 ```
 
 `PATCH /v0/webhooks/{webhook_id}`
+
+| Flag | Type | Required | Description |
+|------|------|----------|-------------|
+| `--webhook-id` | `webhooksWebhookId` | Yes |  |
+| `--json` | `JSON` | Yes | Request body as JSON (or use individual body-field flags) |
+
+#### `agentmail webhooks update-headers`
+
+Atomically set, replace, or remove custom HTTP headers included with deliveries to this webhook.
+Header values remain write-only.
+
+`PATCH /v0/webhooks/{webhook_id}/headers`
 
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|

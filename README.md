@@ -1,6 +1,7 @@
 # AgentMail CLI
 
-[![npm shield](https://img.shields.io/npm/v/agentmail-cli)](https://www.npmjs.com/package/agentmail-cli)
+[![fern shield](https://img.shields.io/badge/%F0%9F%8C%BF-CLI%20generated%20by%20Fern-brightgreen)](https://buildwithfern.com?utm_source=github&utm_medium=github&utm_campaign=readme&utm_source=https%3A%2F%2Fgithub.com%2Fagentmail-to%2Fagentmail-cli-fern)
+[![npm shield](https://img.shields.io/npm/v/agentmail-cli-fern)](https://www.npmjs.com/package/agentmail-cli-fern)
 
 Command-line interface for the AgentMail API.
 
@@ -16,19 +17,32 @@ Command-line interface for the AgentMail API.
   - [Environment variables](#environment-variables)
   - [Output formats](#output-formats)
   - [Shell completion](#shell-completion)
+- [Attribution](#attribution)
 
 ## Installation
 
-Install the CLI globally via npm:
+### Shell (macOS / Linux)
 
 ```bash
-npm install -g agentmail-cli
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/agentmail-to/agentmail-cli-fern/releases/latest/download/agentmail-cli-installer.sh | sh
 ```
 
-Or run it directly without installing:
+### PowerShell (Windows)
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/agentmail-to/agentmail-cli-fern/releases/latest/download/agentmail-cli-installer.ps1 | iex"
+```
+
+### npm
 
 ```bash
-npx agentmail-cli --help
+npm install -g agentmail-cli-fern
+```
+
+Or run directly without installing:
+
+```bash
+npx agentmail-cli-fern --help
 ```
 
 ### Build from source
@@ -45,6 +59,7 @@ cargo build --release
 Set the following environment variable(s) before using the CLI:
 
 ```bash
+export AGENTMAIL_API_KEY="<your token>"
 export AGENTMAIL_TOKEN="<your token>"
 ```
 
@@ -112,14 +127,19 @@ Standard environment variables (`HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` / `SSL
 
 ### Output formats
 
-Use the global `--format` flag to control output. Supported values: `json` (default), `table`, `yaml`, `csv`.
+Use the global `--format` flag to control output. Supported values: `json`, `table`, `yaml`, `csv`, `jsonl`, `raw`, `http`.
+
+Without `--format`, output (including errors) is `table` when stdout is a terminal and `json` when it is piped or redirected — so scripts and agents get JSON by default. Pass `--human` to keep the interactive rendering when piping to a pager, and `--format json` to pin JSON in a terminal.
 
 ```bash
 # Pipe JSON output through jq
 agentmail <resource> <method> --format json | jq
 
-# Machine-readable catalog of every operation
-agentmail --help --format json | jq 'length'
+# Keep the human rendering even when piped
+agentmail <resource> <method> --human | less
+
+# Machine-readable catalog of every operation (same as --schema)
+agentmail --help --format json | jq '.operations | length'
 ```
 
 ### Shell completion
@@ -129,4 +149,8 @@ Generate shell completion scripts:
 ```bash
 agentmail completion <bash|zsh|fish|powershell>
 ```
+
+## Attribution
+
+Built on [fern-cli-sdk](https://github.com/fern-api/fern), Copyright Fern, licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 

@@ -24,6 +24,10 @@ pub struct PaginationConfig {
     pub page_limit: u32,
     /// Delay between page fetches in milliseconds (default: 100).
     pub page_delay_ms: u64,
+    /// Disable the pager even on interactive terminals (`--no-pager`).
+    pub no_pager: bool,
+    /// CLI binary name, used for the `<NAME>_PAGER` env var lookup.
+    pub cli_name: String,
 }
 
 impl Default for PaginationConfig {
@@ -32,6 +36,8 @@ impl Default for PaginationConfig {
             page_all: false,
             page_limit: 10,
             page_delay_ms: 100,
+            no_pager: false,
+            cli_name: String::new(),
         }
     }
 }
@@ -58,9 +64,10 @@ fn parse_and_validate_inputs(
         Map::new()
     };
 
-    let gql = method.graphql.as_ref().ok_or_else(|| {
-        CliError::Discovery("GraphQL method info missing from spec".to_string())
-    })?;
+    let gql = method
+        .graphql
+        .as_ref()
+        .ok_or_else(|| CliError::Discovery("GraphQL method info missing from spec".to_string()))?;
 
     for (param_name, param_def) in &method.parameters {
         if param_def.required
@@ -105,10 +112,12 @@ fn build_http_request(
 /// and the partial data is returned. Only when there is no `data` at all do we
 /// treat the errors as fatal.
 fn parse_graphql_response(body_text: &str) -> Result<String, CliError> {
-    let json_val: Value = serde_json::from_str(body_text).map_err(|e| CliError::Api {
-        code: 400,
-        message: format!("Invalid GraphQL response: {e}"),
-        reason: "graphql_parse_error".to_string(),
+    let json_val: Value = serde_json::from_str(body_text).map_err(|e| {
+        CliError::api(
+            400,
+            format!("Invalid GraphQL response: {e}"),
+            "graphql_parse_error",
+        )
     })?;
 
     let has_data = json_val
@@ -126,10 +135,18 @@ fn parse_graphql_response(body_text: &str) -> Result<String, CliError> {
             if has_data {
                 eprintln!("GraphQL partial errors: {message}");
             } else {
+                // GraphQL puts every error's location/path/extensions here;
+                // keep them for machine consumers. Each entry keeps its own
+                // `message` because it pairs with that entry's `path` — the
+                // top-level `message` is a join of all of them, not one lifted
+                // field, so there is no single occurrence to drop.
+                let details = crate::error::prune(json!({ "errors": errors }));
                 return Err(CliError::Api {
                     code: 400,
                     message,
                     reason: "graphql_error".to_string(),
+                    details,
+                    help: None,
                 });
             }
         }
@@ -149,10 +166,12 @@ fn parse_graphql_response(body_text: &str) -> Result<String, CliError> {
         json_val
     };
 
-    serde_json::to_string(&unwrapped).map_err(|e| CliError::Api {
-        code: 500,
-        message: format!("Failed to serialize GraphQL response: {e}"),
-        reason: "graphql_serialize_error".to_string(),
+    serde_json::to_string(&unwrapped).map_err(|e| {
+        CliError::api(
+            500,
+            format!("Failed to serialize GraphQL response: {e}"),
+            "graphql_serialize_error",
+        )
     })
 }
 
@@ -164,6 +183,7 @@ async fn handle_json_response(
     page_all: bool,
     capture_output: bool,
     captured: &mut Vec<Value>,
+    pager: &mut Option<crate::pager::PagerHandle>,
 ) -> Result<(), CliError> {
     if let Ok(json_val) = serde_json::from_str::<Value>(body_text) {
         *pages_fetched += 1;
@@ -172,10 +192,16 @@ async fn handle_json_response(
             captured.push(json_val);
         } else if page_all {
             let is_first_page = *pages_fetched == 1;
-            let mut out = std::io::stdout().lock();
-            pipeline
-                .emit(&mut out, &json_val, true, is_first_page)
-                .context("Failed to write output")?;
+            if let Some(ref mut pager_handle) = pager {
+                pipeline
+                    .emit(pager_handle, &json_val, true, is_first_page)
+                    .context("Failed to write output")?;
+            } else {
+                let mut out = std::io::stdout().lock();
+                pipeline
+                    .emit(&mut out, &json_val, true, is_first_page)
+                    .context("Failed to write output")?;
+            }
         } else {
             let mut out = std::io::stdout().lock();
             pipeline
@@ -189,10 +215,29 @@ async fn handle_json_response(
 }
 
 
+/// Resolve the retry policy for a run from the `--no-retry` opt-out.
+///
+/// `--no-retry` is a user-facing debug switch that disables retries entirely;
+/// otherwise the SDK's [default policy](crate::http::RetryPolicy::default) is
+/// applied. Threading a `RetryPolicy` (rather than hardcoding the default in
+/// the executor) keeps the GraphQL path at parity with the OpenAPI executor,
+/// where the policy is configurable per run.
+pub fn resolve_retry_policy(no_retry: bool) -> crate::http::RetryPolicy {
+    if no_retry {
+        crate::http::RetryPolicy::disabled()
+    } else {
+        crate::http::RetryPolicy::default()
+    }
+}
+
 /// Executes a GraphQL operation.
 ///
 /// Posts the rendered query to the schema's endpoint, unwraps the `data` envelope,
 /// and continues paginating via `pageInfo.endCursor` until the page limit is hit.
+///
+/// `retry_policy` is threaded in by the caller (see [`resolve_retry_policy`])
+/// so the policy is configurable per run rather than hardcoded here. `no_retry`
+/// is still honored as a hard short-circuit inside [`crate::http::decide_retry`].
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_method(
     doc: &GraphQLSchema,
@@ -206,7 +251,9 @@ pub async fn execute_method(
     capture_output: bool,
     base_url_override: Option<&str>,
     http_config: &crate::http::HttpConfig,
+    retry_policy: &crate::http::RetryPolicy,
     no_retry: bool,
+    debug: bool,
 ) -> Result<Option<Value>, CliError> {
     let mut input =
         parse_and_validate_inputs(doc, method, params_json, body_json, base_url_override)?;
@@ -231,9 +278,22 @@ pub async fn execute_method(
     let mut pages_fetched: u32 = 0;
     let mut captured_values = Vec::new();
 
-    let client = http_config.build_client()?;
+    // Spawn an external pager when --page-all is active on a TTY.
+    let pager_label = method.id.as_deref().unwrap_or("graphql");
+    let mut pager_handle = if pagination.page_all && !pagination.no_pager && !capture_output {
+        let pager_config = crate::pager::PagerConfig::from_env(&pagination.cli_name);
+        crate::pager::spawn_pager(&pager_config, pager_label)
+    } else {
+        None
+    };
 
-    let retry_policy = crate::http::RetryPolicy::default();
+    // GraphQL auth is always Authorization: Bearer — covered by the static
+    // denylist in debug.rs. GraphQL introspection schemas carry no security
+    // scheme metadata, so there are no spec-declared api-key-in-header names
+    // to add.
+    let extra_sensitive_headers: &[&str] = &[];
+
+    let client = http_config.build_client()?;
 
     loop {
         let method_id = method.id.as_deref().unwrap_or("unknown");
@@ -251,7 +311,30 @@ pub async fn execute_method(
                 request = request.header("Idempotency-Key", key.as_str());
             }
 
-            match request.send().await {
+            let built = request.build().map_err(|e| {
+                // `Validation`, not `Other`: `build()` fails on a malformed URL
+                // or header value, which comes from `--base-url` or a flag the
+                // user typed. Reporting it as `code: 500` claimed a server
+                // status for a request that was never sent, and buried a
+                // fixable input error under an internal-error exit code.
+                CliError::Validation(format!(
+                    "Failed to build HTTP request: {}",
+                    crate::error::error_chain(&e)
+                ))
+            })?;
+            if debug {
+                let query_str = input.body.get("query").and_then(|q| q.as_str()).unwrap_or("");
+                let empty_vars = Value::Object(Map::new());
+                let variables = input.body.get("variables").unwrap_or(&empty_vars);
+                crate::debug::dump_graphql_request(
+                    built.url().as_str(),
+                    built.headers(),
+                    query_str,
+                    variables,
+                    extra_sensitive_headers,
+                );
+            }
+            match client.execute(built).await {
                 Ok(resp) => {
                     let status = resp.status();
                     let retry_after_header = resp
@@ -266,7 +349,7 @@ pub async fn execute_method(
                     if let Some(delay) = crate::http::decide_retry(
                         retry_attempt,
                         &outcome,
-                        &retry_policy,
+                        retry_policy,
                         "POST",
                         idempotency_key.is_some(),
                         no_retry,
@@ -287,6 +370,11 @@ pub async fn execute_method(
                     break resp;
                 }
                 Err(e) => {
+                    // See the OpenAPI executor: a refused redirect must not be
+                    // retried, nor reported as an internal error.
+                    if let Some(err) = crate::http::redirect_refusal_error(&e) {
+                        return Err(err);
+                    }
                     let outcome = crate::http::RetryOutcome {
                         status: None,
                         retry_after: None,
@@ -294,7 +382,7 @@ pub async fn execute_method(
                     if let Some(delay) = crate::http::decide_retry(
                         retry_attempt,
                         &outcome,
-                        &retry_policy,
+                        retry_policy,
                         "POST",
                         idempotency_key.is_some(),
                         no_retry,
@@ -312,13 +400,21 @@ pub async fn execute_method(
                         continue;
                     }
                     crate::http::maybe_emit_tls_hint(http_config, &e);
-                    return Err(anyhow::Error::from(e).context("HTTP request failed").into());
+                    // `Network`, not `Other`: nothing answered, so there is no
+                    // HTTP status to put in `error.code`. The chain is walked
+                    // because reqwest's own Display stops at "error sending
+                    // request" — "Connection refused" is the actionable part.
+                    return Err(CliError::Network(format!(
+                        "HTTP request failed: {}",
+                        crate::error::error_chain(&e)
+                    )));
                 }
             }
         };
         let latency_ms = start.elapsed().as_millis() as u64;
 
         let status = response.status();
+        let response_headers = response.headers().clone();
 
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
@@ -329,6 +425,15 @@ pub async fn execute_method(
                 latency_ms = latency_ms,
                 "API error"
             );
+            if debug {
+                crate::debug::dump_error_response(
+                    status.as_u16(),
+                    latency_ms,
+                    &response_headers,
+                    &error_body,
+                    extra_sensitive_headers,
+                );
+            }
             return handle_error_response(
                 status,
                 &error_body,
@@ -350,6 +455,15 @@ pub async fn execute_method(
             .text()
             .await
             .context("Failed to read response body")?;
+        if debug {
+            crate::debug::dump_response(
+                status.as_u16(),
+                latency_ms,
+                &response_headers,
+                &body_text,
+                extra_sensitive_headers,
+            );
+        }
         let response_body = parse_graphql_response(&body_text)?;
 
         handle_json_response(
@@ -359,6 +473,7 @@ pub async fn execute_method(
             pagination.page_all,
             capture_output,
             &mut captured_values,
+            &mut pager_handle,
         )
         .await?;
 
@@ -390,6 +505,9 @@ pub async fn execute_method(
 
         break;
     }
+
+    // Close the pager pipe and wait for it to exit before returning.
+    drop(pager_handle);
 
     if capture_output && !captured_values.is_empty() {
         if captured_values.len() == 1 {
@@ -726,6 +844,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut captured = Vec::new();
 
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
         handle_json_response(
             r#"{"items":["a"]}"#,
             &pipeline,
@@ -733,6 +852,7 @@ mod tests {
             false,
             true,
             &mut captured,
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -747,6 +867,7 @@ mod tests {
         let mut pages_fetched = 0u32;
         let mut captured = Vec::new();
 
+        let mut pager_none: Option<crate::pager::PagerHandle> = None;
         handle_json_response(
             "not json at all",
             &pipeline,
@@ -754,6 +875,7 @@ mod tests {
             false,
             false,
             &mut captured,
+            &mut pager_none,
         )
         .await
         .unwrap();
@@ -820,6 +942,7 @@ mod tests {
         let pagination = PaginationConfig::default();
         let pipeline = crate::formatter::OutputPipeline::default();
         let http_config = crate::http::HttpConfig::new("test").unwrap();
+        let retry_policy = crate::http::RetryPolicy::default();
 
         let result = execute_method(
             &doc,
@@ -833,7 +956,9 @@ mod tests {
             true, // capture_output
             None,
             &http_config,
+            &retry_policy,
             false,
+            false, // debug
         )
         .await
         .expect("dry-run should succeed");
@@ -842,6 +967,117 @@ mod tests {
         assert_eq!(value["dry_run"], json!(true));
         assert_eq!(value["url"], json!("https://example.com/graphql"));
         assert_eq!(value["method"], json!("POST"));
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_retry_policy + retry threading
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_resolve_retry_policy_default_vs_disabled() {
+        // Without --no-retry the SDK default policy is applied.
+        let enabled = resolve_retry_policy(false);
+        assert_eq!(enabled, crate::http::RetryPolicy::default());
+        assert!(enabled.enabled);
+        // --no-retry maps to the fully-disabled policy.
+        let disabled = resolve_retry_policy(true);
+        assert_eq!(disabled, crate::http::RetryPolicy::disabled());
+        assert!(!disabled.enabled);
+    }
+
+    /// Run `execute_method` against a mock server, returning the result.
+    /// Auth is `no_auth` and the operation is the minimal `ping` query, so
+    /// every request is a bare `POST /graphql`.
+    async fn run_against_mock(
+        base_url: &str,
+        retry_policy: &crate::http::RetryPolicy,
+        no_retry: bool,
+    ) -> Result<Option<Value>, CliError> {
+        let (doc, method) = minimal_ping_doc_and_method();
+        let pagination = PaginationConfig::default();
+        let pipeline = crate::formatter::OutputPipeline::default();
+        let http_config = crate::http::HttpConfig::new("test").unwrap();
+        execute_method(
+            &doc,
+            &method,
+            None,
+            None,
+            &crate::auth::no_auth_provider(),
+            false, // dry_run
+            &pagination,
+            &pipeline,
+            true, // capture_output
+            Some(base_url),
+            &http_config,
+            retry_policy,
+            no_retry,
+            false, // debug
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_no_retry_yields_single_attempt() {
+        use wiremock::matchers::method as http_method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // 503 is retryable, but --no-retry must short-circuit to a single
+        // attempt. `expect(1)` fails the test if the executor sends a retry.
+        Mock::given(http_method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let base_url = format!("{}/graphql", server.uri().trim_end_matches('/'));
+        // With --no-retry the policy is disabled and `no_retry` is true; both
+        // signals agree on "do not retry".
+        let policy = resolve_retry_policy(true);
+        let result = run_against_mock(&base_url, &policy, true).await;
+
+        assert!(result.is_err(), "503 with --no-retry should surface as an error");
+        // `expect(1)` is verified on drop — exactly one request was sent.
+    }
+
+    #[tokio::test]
+    async fn test_retryable_status_retries_under_default_policy() {
+        use wiremock::matchers::method as http_method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // First attempt: 503 (retryable). Second attempt: 200 success.
+        Mock::given(http_method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(http_method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": { "ping": "pong" }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // A short base delay keeps the test fast while still exercising the
+        // real backoff/sleep path of the default-shaped policy.
+        let policy = crate::http::RetryPolicy {
+            base_delay_ms: 1,
+            ..crate::http::RetryPolicy::default()
+        };
+        let result = run_against_mock(&base_url_of(&server), &policy, false).await;
+
+        let value = result.expect("should succeed after one retry");
+        let value = value.expect("capture_output should return Some");
+        assert_eq!(value, json!("pong"), "single-field data envelope is unwrapped");
+        // Both `expect(1)` mocks are verified on drop: exactly two requests
+        // total — one 503, one 200 — proving the retryable status retried.
+    }
+
+    fn base_url_of(server: &wiremock::MockServer) -> String {
+        format!("{}/graphql", server.uri().trim_end_matches('/'))
     }
 
     // -----------------------------------------------------------------------

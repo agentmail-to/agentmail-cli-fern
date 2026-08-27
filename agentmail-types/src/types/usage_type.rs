@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// Type of usage metric. Inbox-scoped queries carry `storage_bytes`,

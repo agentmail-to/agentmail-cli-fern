@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// Update an inbox-scoped webhook. It is fixed to its inbox, so only `event_types` can change.

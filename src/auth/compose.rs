@@ -41,10 +41,23 @@ impl AuthProvider for AnyAuthProvider {
         self.providers.iter().any(|p| p.has_credentials())
     }
 
+    fn inject_token_cache(&self, cli_name: &str) {
+        for p in &self.providers {
+            p.inject_token_cache(cli_name);
+        }
+    }
+
     fn credential_hints(&self) -> Vec<String> {
         self.providers
             .iter()
             .flat_map(|p| p.credential_hints())
+            .collect()
+    }
+
+    fn populated_credential_hints(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .flat_map(|p| p.populated_credential_hints())
             .collect()
     }
 
@@ -112,10 +125,23 @@ impl AuthProvider for AllAuthProvider {
         !self.providers.is_empty() && self.providers.iter().all(|p| p.has_credentials())
     }
 
+    fn inject_token_cache(&self, cli_name: &str) {
+        for p in &self.providers {
+            p.inject_token_cache(cli_name);
+        }
+    }
+
     fn credential_hints(&self) -> Vec<String> {
         self.providers
             .iter()
             .flat_map(|p| p.credential_hints())
+            .collect()
+    }
+
+    fn populated_credential_hints(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .flat_map(|p| p.populated_credential_hints())
             .collect()
     }
 
@@ -193,12 +219,26 @@ impl AuthProvider for LayeredAuthProvider {
         self.primary.has_credentials()
     }
 
+    fn inject_token_cache(&self, cli_name: &str) {
+        self.primary.inject_token_cache(cli_name);
+        for layer in &self.layers {
+            layer.inject_token_cache(cli_name);
+        }
+    }
+
     fn credential_hints(&self) -> Vec<String> {
         // Surface only the primary's hints in the friendly auth-error path:
         // a missing optional layer (e.g. no sandbox token in production) is
         // not a misconfiguration and shouldn't be reported as a missing
         // credential.
         self.primary.credential_hints()
+    }
+
+    fn populated_credential_hints(&self) -> Vec<String> {
+        // Same primary-only rule; without this override the composite fell
+        // back to the trait default, which returns the *unfiltered* hints and
+        // silently undid the filtering for every CLI wrapped in a layer.
+        self.primary.populated_credential_hints()
     }
 
     fn has_credentials_for(&self, endpoint: &EndpointAuthMetadata) -> bool {
@@ -280,6 +320,15 @@ impl AuthProvider for RoutingAuthProvider {
             || self.default.as_ref().is_some_and(|p| p.has_credentials())
     }
 
+    fn inject_token_cache(&self, cli_name: &str) {
+        for p in self.schemes.values() {
+            p.inject_token_cache(cli_name);
+        }
+        if let Some(d) = &self.default {
+            d.inject_token_cache(cli_name);
+        }
+    }
+
     fn credential_hints(&self) -> Vec<String> {
         let mut hints: Vec<String> = self
             .schemes
@@ -288,6 +337,25 @@ impl AuthProvider for RoutingAuthProvider {
             .collect();
         if let Some(d) = &self.default {
             hints.extend(d.credential_hints());
+        }
+        hints
+    }
+
+    /// Same walk as [`credential_hints`](Self::credential_hints), filtered.
+    ///
+    /// Missing this override made the populated-hints filtering inert on the
+    /// most common configuration there is: a `RoutingAuthProvider` is built
+    /// whenever any operation declares per-operation `security:`, which on a
+    /// real spec means nearly every operation. The trait default returns the
+    /// unfiltered hints, so a 401 still named every declared source.
+    fn populated_credential_hints(&self) -> Vec<String> {
+        let mut hints: Vec<String> = self
+            .schemes
+            .values()
+            .flat_map(|p| p.populated_credential_hints())
+            .collect();
+        if let Some(d) = &self.default {
+            hints.extend(d.populated_credential_hints());
         }
         hints
     }

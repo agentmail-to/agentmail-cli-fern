@@ -15,7 +15,7 @@ impl ApiKeysClient3 {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail pods:api-keys list --pod-id <pod_id>
+    /// agentmail pods api-keys list --pod-id <pod_id>
     /// ```
     ///
     /// # Arguments
@@ -25,6 +25,32 @@ impl ApiKeysClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .api_keys
+    ///         .list(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &PodsAPIKeysListQueryRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         pod_id: &PodsPodId,
@@ -47,7 +73,7 @@ impl ApiKeysClient3 {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail pods:api-keys create --pod-id <pod_id> --name "My Key"
+    /// agentmail pods api-keys create --pod-id <pod_id> --name "My Key"
     /// ```
     ///
     /// # Arguments
@@ -57,6 +83,32 @@ impl ApiKeysClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .api_keys
+    ///         .create(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &CreateAPIKeyRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn create(
         &self,
         pod_id: &PodsPodId,
@@ -76,7 +128,7 @@ impl ApiKeysClient3 {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail pods:api-keys delete --pod-id <pod_id> --api-key-id <api_key_id>
+    /// agentmail pods api-keys delete --pod-id <pod_id> --api-key-id <api_key_id>
     /// ```
     ///
     /// # Arguments
@@ -86,6 +138,30 @@ impl ApiKeysClient3 {
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .api_keys
+    ///         .delete(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &APIKeyID("api_key_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         pod_id: &PodsPodId,

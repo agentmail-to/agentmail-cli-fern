@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 #[non_exhaustive]
@@ -13,6 +14,7 @@ pub enum EventType {
     MessageBounced,
     MessageComplained,
     MessageRejected,
+    MessageOpened,
     DomainVerified,
     /// This variant is used for forward compatibility.
     /// If the server sends a value not recognized by the current SDK version,
@@ -31,6 +33,7 @@ impl Serialize for EventType {
             Self::MessageBounced => serializer.serialize_str("message.bounced"),
             Self::MessageComplained => serializer.serialize_str("message.complained"),
             Self::MessageRejected => serializer.serialize_str("message.rejected"),
+            Self::MessageOpened => serializer.serialize_str("message.opened"),
             Self::DomainVerified => serializer.serialize_str("domain.verified"),
             Self::__Unknown(val) => serializer.serialize_str(val),
         }
@@ -50,6 +53,7 @@ impl<'de> Deserialize<'de> for EventType {
             "message.bounced" => Ok(Self::MessageBounced),
             "message.complained" => Ok(Self::MessageComplained),
             "message.rejected" => Ok(Self::MessageRejected),
+            "message.opened" => Ok(Self::MessageOpened),
             "domain.verified" => Ok(Self::DomainVerified),
             _ => Ok(Self::__Unknown(value)),
         }
@@ -68,6 +72,7 @@ impl fmt::Display for EventType {
             Self::MessageBounced => write!(f, "message.bounced"),
             Self::MessageComplained => write!(f, "message.complained"),
             Self::MessageRejected => write!(f, "message.rejected"),
+            Self::MessageOpened => write!(f, "message.opened"),
             Self::DomainVerified => write!(f, "domain.verified"),
             Self::__Unknown(val) => write!(f, "{}", val),
         }

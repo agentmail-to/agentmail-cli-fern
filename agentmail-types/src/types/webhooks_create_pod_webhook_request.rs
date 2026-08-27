@@ -1,10 +1,11 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// Create a webhook scoped to a pod. The pod comes from the path, so `pod_ids` is not accepted.
 /// Optionally pass `inbox_ids` to narrow the webhook to specific inboxes within the pod; omit to
 /// receive events for the whole pod.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct WebhooksCreatePodWebhookRequest {
     #[serde(flatten)]
     pub webhooks_create_inbox_webhook_request_fields: WebhooksCreateInboxWebhookRequest,

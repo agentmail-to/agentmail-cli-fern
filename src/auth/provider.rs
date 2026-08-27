@@ -19,6 +19,7 @@ use crate::error::CliError;
 #[derive(Debug, Clone, Default)]
 pub struct EndpointAuthMetadata {
     pub security_requirements: Option<Vec<HashMap<String, Vec<String>>>>,
+    pub base_url_override: Option<String>,
 }
 
 impl EndpointAuthMetadata {
@@ -32,13 +33,20 @@ impl EndpointAuthMetadata {
     pub fn explicit_anonymous() -> Self {
         Self {
             security_requirements: Some(Vec::new()),
+            base_url_override: None,
         }
     }
 
     pub fn with_requirements(reqs: Vec<HashMap<String, Vec<String>>>) -> Self {
         Self {
             security_requirements: Some(reqs),
+            base_url_override: None,
         }
+    }
+
+    pub fn with_base_url_override(mut self, base_url_override: Option<&str>) -> Self {
+        self.base_url_override = base_url_override.map(str::to_string);
+        self
     }
 
     /// True when the operation pinned `security: []` — the spec's "this
@@ -111,6 +119,21 @@ pub trait AuthProvider: Send + Sync + std::fmt::Debug {
         Vec::new()
     }
 
+    /// Like [`credential_hints`](Self::credential_hints), but restricted to
+    /// sources that actually hold a value.
+    ///
+    /// The 401/403 path names the sources a rejected credential came from. It
+    /// used to name every *declared* source, so on a CLI with two schemes it
+    /// listed four places when one had supplied the value — and then advised
+    /// hunting for shadowing between sources the user had never set.
+    ///
+    /// Defaults to [`credential_hints`](Self::credential_hints) so a provider
+    /// that cannot distinguish keeps today's behavior; providers backed by an
+    /// [`AuthCredentialSource`](crate::auth::AuthCredentialSource) override it.
+    fn populated_credential_hints(&self) -> Vec<String> {
+        self.credential_hints()
+    }
+
     /// Apply the scheme to `request`. Implementations should be a no-op if
     /// they can't satisfy the request (e.g., no env var set), so wrappers can
     /// fall through. Hard errors (malformed token bytes) are surfaced via
@@ -120,6 +143,14 @@ pub trait AuthProvider: Send + Sync + std::fmt::Debug {
         request: reqwest::RequestBuilder,
         endpoint: &EndpointAuthMetadata,
     ) -> Result<reqwest::RequestBuilder, CliError>;
+
+    /// Post-construction hook: inject the on-disk token cache for
+    /// cross-invocation persistence. Called by [`CliApp`] in
+    /// `propagate_root_auth` once it knows the binary name.
+    ///
+    /// Default is a no-op. [`OAuth2TokenProvider`](crate::auth::OAuth2TokenProvider)
+    /// overrides this to wire [`TokenCache`](crate::auth::oauth2::TokenCache).
+    fn inject_token_cache(&self, _cli_name: &str) {}
 }
 
 /// Boxed handle the rest of the codebase passes around.

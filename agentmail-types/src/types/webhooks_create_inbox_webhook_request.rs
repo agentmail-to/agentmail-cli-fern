@@ -1,9 +1,10 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// Create a webhook scoped to an inbox. The inbox comes from the path, so `inbox_ids` and `pod_ids`
 /// are not accepted.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct WebhooksCreateInboxWebhookRequest {
     #[serde(default)]
     pub url: WebhooksUrl,
@@ -11,6 +12,8 @@ pub struct WebhooksCreateInboxWebhookRequest {
     pub event_types: WebhooksCreateWebhookEventTypes,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<WebhooksClientId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<WebhooksWebhookHeaders>,
 }
 
 impl WebhooksCreateInboxWebhookRequest {
@@ -25,6 +28,7 @@ pub struct WebhooksCreateInboxWebhookRequestBuilder {
     url: Option<WebhooksUrl>,
     event_types: Option<WebhooksCreateWebhookEventTypes>,
     client_id: Option<WebhooksClientId>,
+    headers: Option<WebhooksWebhookHeaders>,
 }
 
 impl WebhooksCreateInboxWebhookRequestBuilder {
@@ -43,6 +47,11 @@ impl WebhooksCreateInboxWebhookRequestBuilder {
         self
     }
 
+    pub fn headers(mut self, value: WebhooksWebhookHeaders) -> Self {
+        self.headers = Some(value);
+        self
+    }
+
     /// Consumes the builder and constructs a [`WebhooksCreateInboxWebhookRequest`].
     /// This method will fail if any of the following fields are not set:
     /// - [`url`](WebhooksCreateInboxWebhookRequestBuilder::url)
@@ -52,6 +61,7 @@ impl WebhooksCreateInboxWebhookRequestBuilder {
             url: self.url.ok_or_else(|| BuildError::missing_field("url"))?,
             event_types: self.event_types.ok_or_else(|| BuildError::missing_field("event_types"))?,
             client_id: self.client_id,
+            headers: self.headers,
         })
     }
 }

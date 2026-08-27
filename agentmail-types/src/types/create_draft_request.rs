@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
@@ -25,6 +26,10 @@ pub struct CreateDraftRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_reply_to: Option<DraftInReplyTo>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub forward_of: Option<DraftForwardOf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_all: Option<DraftReplyAll>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub send_at: Option<DraftSendAt>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<DraftClientId>,
@@ -49,6 +54,8 @@ pub struct CreateDraftRequestBuilder {
     html: Option<DraftHtml>,
     attachments: Option<Vec<SendAttachment>>,
     in_reply_to: Option<DraftInReplyTo>,
+    forward_of: Option<DraftForwardOf>,
+    reply_all: Option<DraftReplyAll>,
     send_at: Option<DraftSendAt>,
     client_id: Option<DraftClientId>,
 }
@@ -104,6 +111,16 @@ impl CreateDraftRequestBuilder {
         self
     }
 
+    pub fn forward_of(mut self, value: DraftForwardOf) -> Self {
+        self.forward_of = Some(value);
+        self
+    }
+
+    pub fn reply_all(mut self, value: DraftReplyAll) -> Self {
+        self.reply_all = Some(value);
+        self
+    }
+
     pub fn send_at(mut self, value: DraftSendAt) -> Self {
         self.send_at = Some(value);
         self
@@ -127,6 +144,8 @@ impl CreateDraftRequestBuilder {
             html: self.html,
             attachments: self.attachments,
             in_reply_to: self.in_reply_to,
+            forward_of: self.forward_of,
+            reply_all: self.reply_all,
             send_at: self.send_at,
             client_id: self.client_id,
         })
