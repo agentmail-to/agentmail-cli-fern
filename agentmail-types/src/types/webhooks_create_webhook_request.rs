@@ -1,7 +1,8 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct WebhooksCreateWebhookRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pod_ids: Option<PodIds>,
@@ -13,6 +14,8 @@ pub struct WebhooksCreateWebhookRequest {
     pub event_types: WebhooksCreateWebhookEventTypes,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<WebhooksClientId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<WebhooksWebhookHeaders>,
 }
 
 impl WebhooksCreateWebhookRequest {
@@ -29,6 +32,7 @@ pub struct WebhooksCreateWebhookRequestBuilder {
     url: Option<WebhooksUrl>,
     event_types: Option<WebhooksCreateWebhookEventTypes>,
     client_id: Option<WebhooksClientId>,
+    headers: Option<WebhooksWebhookHeaders>,
 }
 
 impl WebhooksCreateWebhookRequestBuilder {
@@ -57,6 +61,11 @@ impl WebhooksCreateWebhookRequestBuilder {
         self
     }
 
+    pub fn headers(mut self, value: WebhooksWebhookHeaders) -> Self {
+        self.headers = Some(value);
+        self
+    }
+
     /// Consumes the builder and constructs a [`WebhooksCreateWebhookRequest`].
     /// This method will fail if any of the following fields are not set:
     /// - [`url`](WebhooksCreateWebhookRequestBuilder::url)
@@ -68,6 +77,7 @@ impl WebhooksCreateWebhookRequestBuilder {
             url: self.url.ok_or_else(|| BuildError::missing_field("url"))?,
             event_types: self.event_types.ok_or_else(|| BuildError::missing_field("event_types"))?,
             client_id: self.client_id,
+            headers: self.headers,
         })
     }
 }

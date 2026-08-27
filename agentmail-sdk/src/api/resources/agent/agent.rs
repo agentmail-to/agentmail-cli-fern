@@ -33,6 +33,33 @@ impl AgentClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .agent
+    ///         .sign_up(
+    ///             &AgentSignupRequest {
+    ///                 human_email: "human_email".to_string(),
+    ///                 username: "username".to_string(),
+    ///                 source: None,
+    ///                 referrer: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn sign_up(
         &self,
         request: &AgentSignupRequest,
@@ -67,6 +94,30 @@ impl AgentClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .agent
+    ///         .verify(
+    ///             &AgentVerifyRequest {
+    ///                 otp_code: "otp_code".to_string(),
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn verify(
         &self,
         request: &AgentVerifyRequest,

@@ -91,6 +91,13 @@ pub struct RestDescription {
     /// disables retries on that operation regardless of root.
     #[serde(default, skip)]
     pub retries: Option<RetriesConfig>,
+    /// Global parameter definitions parsed from the spec-root
+    /// `x-fern-global-parameters` extension. Generalizes
+    /// `x-fern-global-headers` to support header, query, body, and path
+    /// locations. Each entry surfaces as a global CLI flag and is
+    /// injected into outgoing requests at the configured location.
+    #[serde(default, skip)]
+    pub global_parameters: Vec<GlobalParameter>,
     /// Global header definitions parsed from the spec-root
     /// [`x-fern-global-headers`](https://buildwithfern.com/learn/api-definitions/openapi/extensions/global-headers)
     /// extension. Empty when the extension is absent.
@@ -117,6 +124,25 @@ pub struct RestDescription {
     /// existing groups for documentation.
     #[serde(default, skip)]
     pub groups: HashMap<String, SdkGroupInfo>,
+    /// Descriptions from the document-root OpenAPI `tags` array, keyed by
+    /// kebab-cased tag name so they match tag-derived resource keys.
+    #[serde(default, skip)]
+    pub tag_descriptions: HashMap<String, String>,
+    #[serde(default, skip)]
+    pub group_tag_names: HashMap<String, Vec<String>>,
+    /// Number of operations in each top-level group that declare each tag,
+    /// keyed by the lenient tag matching key.
+    #[serde(default, skip)]
+    pub group_tag_operation_counts: HashMap<String, HashMap<String, usize>>,
+    /// Number of operations in each top-level group.
+    #[serde(default, skip)]
+    pub group_operation_counts: HashMap<String, usize>,
+    /// Top-level groups carrying each operation-declared tag, keyed by the
+    /// lenient tag matching key.
+    #[serde(default, skip)]
+    pub tag_group_names: HashMap<String, Vec<String>>,
+    #[serde(default, skip)]
+    pub tag_description_order: Vec<String>,
 }
 
 /// Metadata for a single group declared via the spec-root
@@ -169,6 +195,71 @@ pub struct GlobalHeader {
     /// `x-fern-default` shape — only the value is preserved; the
     /// schema type is informational.
     pub default: Option<String>,
+}
+
+/// Where a global parameter value is injected on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlobalParameterLocation {
+    /// HTTP header (e.g. `X-Custom-Header`).
+    Header,
+    /// URL query parameter (e.g. `?language=en`).
+    Query,
+    /// Nested JSON request body path (e.g. `config.currency`).
+    Body,
+    /// URL path segment (e.g. `{regionId}`).
+    Path,
+}
+
+/// Controls which operations receive the global parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GlobalParameterApplyMode {
+    /// Inject on every operation (unless a per-operation parameter with the
+    /// same wire name overrides it).
+    #[default]
+    Auto,
+    /// Only inject on operations that explicitly list the parameter in
+    /// `x-fern-global-parameter`.
+    Explicit,
+}
+
+/// A single global parameter definition from the spec-root
+/// [`x-fern-global-parameters`] extension. Generalizes
+/// [`GlobalHeader`] to support header, query, body, and path locations.
+///
+/// Each entry surfaces as a global CLI flag at the root of the command
+/// tree with an env-var fallback and (when configured) a baked-in default
+/// value. The resolved value is injected into outgoing requests at the
+/// location specified by [`GlobalParameter::location`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobalParameter {
+    /// Canonical parameter name — used as the basis for the kebab-cased
+    /// CLI flag name (unless `parameter_name` overrides it).
+    pub name: String,
+    /// Where the resolved value is injected on the wire.
+    pub location: GlobalParameterLocation,
+    /// Wire-level target. For headers this is the header name
+    /// (e.g. `X-Max-Retries`); for query it's the query parameter name;
+    /// for body it's a dotted JSON path (e.g. `config.currency`); for
+    /// path it's the path template variable name (e.g. `regionId`).
+    /// Defaults to `name` when absent in the extension.
+    pub target: String,
+    /// Optional environment variable that provides a fallback value.
+    pub env: Option<String>,
+    /// Optional baked-in default value applied when neither the flag
+    /// nor the environment variable is supplied.
+    pub default: Option<String>,
+    /// When `false` (the default), the CLI flag is required — every
+    /// outgoing request must carry a value. When `true`, the parameter
+    /// is omitted from requests where no value resolved.
+    pub optional: bool,
+    /// Controls whether the parameter is injected on all operations
+    /// or only on those that explicitly opt in.
+    pub apply: GlobalParameterApplyMode,
+    /// Optional flag name override for the CLI surface
+    /// (e.g. `maxRetries` → `--max-retries`).
+    pub parameter_name: Option<String>,
+    /// One-line help text for the `--help` output.
+    pub docs: Option<String>,
 }
 
 /// A single idempotency-header definition from the spec-root
@@ -411,6 +502,29 @@ pub struct Server {
     /// Optional human-readable description from the spec — surfaced in
     /// `--help` next to the server URL.
     pub description: Option<String>,
+    /// The URL to use when the caller supplies no value for any of this
+    /// server's template variables, from the `x-fern-default-url`
+    /// extension. Mirrors fern's OpenAPI importer, which treats it as the
+    /// concrete default environment URL for a templated server
+    /// (`packages/cli/api-importers/openapi/openapi-ir-parser/src/openapi/v3/converters/convertServer.ts`).
+    pub default_url: Option<String>,
+    /// The server's OpenAPI `variables:` block, in name order. Each entry
+    /// becomes a global `--<variable>` flag whose value is substituted
+    /// into [`Self::url`] before the request is sent.
+    pub variables: Vec<ServerVariable>,
+}
+
+/// One entry from an OpenAPI server's `variables:` block.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServerVariable {
+    /// Variable name as it appears in the `{placeholder}`.
+    pub name: String,
+    /// The spec's `default` — used when the caller supplies no value.
+    pub default: Option<String>,
+    /// The spec's `description`, surfaced as the flag's `--help` text.
+    pub description: Option<String>,
+    /// The spec's `enum`, surfaced as the flag's allowed values.
+    pub enum_values: Vec<String>,
 }
 
 impl RestDescription {
@@ -532,6 +646,12 @@ impl RetriesConfig {
 pub struct RestMethod {
     pub id: Option<String>,
     pub description: Option<String>,
+    /// The operation's full `description` when it says more than
+    /// [`RestMethod::description`] (which prefers the terse `summary`).
+    /// `None` when the spec has no separate prose, so the command table and
+    /// the command's own `--help` would otherwise repeat one line.
+    #[serde(default)]
+    pub long_description: Option<String>,
     pub http_method: String,
     pub path: String,
     #[serde(default)]
@@ -692,6 +812,12 @@ pub struct RestMethod {
     /// it would do nothing. Empty `responses` block → `false`.
     #[serde(default, skip)]
     pub has_binary_response: bool,
+    /// Parameter names from `x-fern-global-parameter` on this operation.
+    /// Only global parameters with `apply: explicit` that appear in this
+    /// list are injected on this operation. `apply: auto` parameters
+    /// ignore this field.
+    #[serde(default, skip)]
+    pub global_parameter_opt_ins: Vec<String>,
 }
 
 /// Per-operation pagination configuration, resolved from the
@@ -866,6 +992,11 @@ pub struct MultipartField {
     /// Only meaningful when `is_file` is true; text parts always use
     /// `text/plain; charset=utf-8`.
     pub content_type: Option<String>,
+    /// `true` when the field's schema is `type: array` (or a nullable
+    /// composition wrapping one). The flag takes `ArgAction::Append` so it
+    /// can be repeated, and each occurrence is sent as its own part with
+    /// the same `name` — the wire encoding multipart uses for a list.
+    pub repeated: bool,
 }
 
 /// Media upload metadata.
@@ -905,6 +1036,20 @@ pub struct MethodParameter {
     pub location: Option<String>,
     #[serde(default)]
     pub required: bool,
+    /// Whether the *spec* requires this property, independent of whether the
+    /// CLI flag is clap-required.
+    ///
+    /// The two diverge for an object-valued body property the parser recurses
+    /// into: its shorthand flag must stay optional, because the caller can
+    /// satisfy the property with dot-notation leaf flags instead — but the
+    /// property itself is still required on the wire. Reporting `required`
+    /// there made `--schema` disagree with the validator: an agent supplied
+    /// every field the contract listed and the request was still rejected for
+    /// a property `--schema` never mentioned.
+    ///
+    /// `--schema`'s `input.required` uses this; clap uses [`required`].
+    #[serde(default)]
+    pub required_by_spec: bool,
     pub format: Option<String>,
     /// Client-side default sourced only from the Fern `x-fern-default`
     /// extension. When set, the generated CLI plumbs this into clap's
@@ -941,13 +1086,32 @@ pub struct MethodParameter {
     pub enum_descriptions: Option<Vec<String>>,
     #[serde(default)]
     pub repeated: bool,
+    /// Element type of a `repeated` parameter, when the spec's `items` says
+    /// something other than a plain string.
+    ///
+    /// A repeated flag carries `param_type: "string"` because that is the
+    /// *flag* surface — clap collects strings. `--schema` was rendering that
+    /// as `items: {type: string}`, which is a lie for an array of objects: an
+    /// agent reads the contract, sends `["x"]`, and the validator rejects it.
+    /// The element type is preserved here so the advertised contract matches
+    /// the wire, and so the collector knows to JSON-decode each occurrence
+    /// rather than keep it a literal.
+    ///
+    /// `None` means "string" — the overwhelmingly common case, and the value
+    /// every pre-existing lowering produced.
+    pub item_type: Option<String>,
     /// True for `oneOf/anyOf [string, array<string>]` unions where a single
     /// value should be sent as a scalar string, not wrapped in a length-1
     /// array. Pure `type: array` params leave this `false`.
     #[serde(default)]
     pub scalar_or_array: bool,
-    pub minimum: Option<String>,
-    pub maximum: Option<String>,
+    /// Inclusive numeric lower bound (matches [`JsonSchemaProperty::minimum`]).
+    /// Typing the param side as `Option<f64>` keeps `--schema` output
+    /// emit min/max as JSON numbers regardless of whether the property
+    /// came from `parameters` or a request body schema.
+    pub minimum: Option<f64>,
+    /// Inclusive numeric upper bound. See [`Self::minimum`].
+    pub maximum: Option<f64>,
     #[serde(default)]
     pub deprecated: bool,
     /// OpenAPI serialization style (form, deepObject, etc.)
@@ -1100,9 +1264,21 @@ pub struct JsonSchemaProperty {
     pub items: Option<Box<JsonSchemaProperty>>,
     #[serde(default)]
     pub properties: HashMap<String, JsonSchemaProperty>,
+    /// Names of nested object properties that the source schema marks as
+    /// required. Lowered from the OpenAPI `required: [...]` keyword on
+    /// object-typed schemas. Empty when the source had no `required` list
+    /// or when this property is not an object (e.g. scalar / array).
+    /// Surfaced in `--schema` so agents constructing nested JSON bodies
+    /// can tell which sub-fields the spec mandates.
+    #[serde(default)]
+    pub required: Vec<String>,
     #[serde(default)]
     pub read_only: bool,
-    pub default: Option<String>,
+    /// OpenAPI's standard `default:` keyword. Stored as a `serde_json::Value`
+    /// (lowered from the raw YAML) so the wire type — number, boolean,
+    /// object, etc. — survives into the agent-facing `--schema` output
+    /// and is symmetric with [`MethodParameter::default_value`].
+    pub default: Option<serde_json::Value>,
     #[serde(rename = "enum")]
     pub enum_values: Option<Vec<String>>,
     /// Inclusive numeric lower bound. Lowered by the parser so the OpenAPI

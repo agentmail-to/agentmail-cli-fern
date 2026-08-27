@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// Granular permissions for the API key. When ommitted all permissions are granted. Otherwise, only permissions set to true are granted.
@@ -16,27 +17,27 @@ pub struct ApiKeyPermissions {
     /// Delete inboxes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inbox_delete: Option<bool>,
-    /// Read threads.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thread_read: Option<bool>,
-    /// Delete threads.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thread_delete: Option<bool>,
-    /// Read messages.
+    /// Read messages. Also required to read threads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_read: Option<bool>,
     /// Send messages.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_send: Option<bool>,
-    /// Update message labels.
+    /// Update message labels. Also required to update threads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_update: Option<bool>,
+    /// Delete messages. Also required to delete threads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_delete: Option<bool>,
     /// Access messages labeled spam.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label_spam_read: Option<bool>,
     /// Access messages labeled blocked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label_blocked_read: Option<bool>,
+    /// Access messages labeled unauthenticated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_unauthenticated_read: Option<bool>,
     /// Access messages labeled trash.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label_trash_read: Option<bool>,
@@ -97,6 +98,9 @@ pub struct ApiKeyPermissions {
     /// Create API keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key_create: Option<bool>,
+    /// Update API keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_update: Option<bool>,
     /// Delete API keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key_delete: Option<bool>,
@@ -124,13 +128,13 @@ pub struct ApiKeyPermissionsBuilder {
     inbox_create: Option<bool>,
     inbox_update: Option<bool>,
     inbox_delete: Option<bool>,
-    thread_read: Option<bool>,
-    thread_delete: Option<bool>,
     message_read: Option<bool>,
     message_send: Option<bool>,
     message_update: Option<bool>,
+    message_delete: Option<bool>,
     label_spam_read: Option<bool>,
     label_blocked_read: Option<bool>,
+    label_unauthenticated_read: Option<bool>,
     label_trash_read: Option<bool>,
     draft_read: Option<bool>,
     draft_create: Option<bool>,
@@ -151,6 +155,7 @@ pub struct ApiKeyPermissionsBuilder {
     metrics_read: Option<bool>,
     api_key_read: Option<bool>,
     api_key_create: Option<bool>,
+    api_key_update: Option<bool>,
     api_key_delete: Option<bool>,
     pod_read: Option<bool>,
     pod_create: Option<bool>,
@@ -178,16 +183,6 @@ impl ApiKeyPermissionsBuilder {
         self
     }
 
-    pub fn thread_read(mut self, value: bool) -> Self {
-        self.thread_read = Some(value);
-        self
-    }
-
-    pub fn thread_delete(mut self, value: bool) -> Self {
-        self.thread_delete = Some(value);
-        self
-    }
-
     pub fn message_read(mut self, value: bool) -> Self {
         self.message_read = Some(value);
         self
@@ -203,6 +198,11 @@ impl ApiKeyPermissionsBuilder {
         self
     }
 
+    pub fn message_delete(mut self, value: bool) -> Self {
+        self.message_delete = Some(value);
+        self
+    }
+
     pub fn label_spam_read(mut self, value: bool) -> Self {
         self.label_spam_read = Some(value);
         self
@@ -210,6 +210,11 @@ impl ApiKeyPermissionsBuilder {
 
     pub fn label_blocked_read(mut self, value: bool) -> Self {
         self.label_blocked_read = Some(value);
+        self
+    }
+
+    pub fn label_unauthenticated_read(mut self, value: bool) -> Self {
+        self.label_unauthenticated_read = Some(value);
         self
     }
 
@@ -313,6 +318,11 @@ impl ApiKeyPermissionsBuilder {
         self
     }
 
+    pub fn api_key_update(mut self, value: bool) -> Self {
+        self.api_key_update = Some(value);
+        self
+    }
+
     pub fn api_key_delete(mut self, value: bool) -> Self {
         self.api_key_delete = Some(value);
         self
@@ -340,13 +350,13 @@ impl ApiKeyPermissionsBuilder {
             inbox_create: self.inbox_create,
             inbox_update: self.inbox_update,
             inbox_delete: self.inbox_delete,
-            thread_read: self.thread_read,
-            thread_delete: self.thread_delete,
             message_read: self.message_read,
             message_send: self.message_send,
             message_update: self.message_update,
+            message_delete: self.message_delete,
             label_spam_read: self.label_spam_read,
             label_blocked_read: self.label_blocked_read,
+            label_unauthenticated_read: self.label_unauthenticated_read,
             label_trash_read: self.label_trash_read,
             draft_read: self.draft_read,
             draft_create: self.draft_create,
@@ -367,6 +377,7 @@ impl ApiKeyPermissionsBuilder {
             metrics_read: self.metrics_read,
             api_key_read: self.api_key_read,
             api_key_create: self.api_key_create,
+            api_key_update: self.api_key_update,
             api_key_delete: self.api_key_delete,
             pod_read: self.pod_read,
             pod_create: self.pod_create,

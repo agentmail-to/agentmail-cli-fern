@@ -21,7 +21,7 @@ impl MessagesClient {
     ///
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages list --inbox-id <inbox_id>
+    /// agentmail inboxes messages list --inbox-id <inbox_id>
     /// ```
     ///
     /// # Arguments
@@ -34,6 +34,44 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .list(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &InboxesMessagesListQueryRequest {
+    ///                 limit: None,
+    ///                 page_token: None,
+    ///                 labels: vec![],
+    ///                 before: None,
+    ///                 after: None,
+    ///                 ascending: None,
+    ///                 include_spam: None,
+    ///                 include_blocked: None,
+    ///                 include_unauthenticated: None,
+    ///                 include_trash: None,
+    ///                 from: None,
+    ///                 to: None,
+    ///                 subject: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         inbox_id: &InboxesInboxId,
@@ -80,6 +118,36 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .search(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &InboxesMessagesSearchQueryRequest {
+    ///                 q: Query("q".to_string()),
+    ///                 limit: None,
+    ///                 page_token: None,
+    ///                 before: None,
+    ///                 after: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn search(
         &self,
         inbox_id: &InboxesInboxId,
@@ -105,7 +173,7 @@ impl MessagesClient {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages get --inbox-id <inbox_id> --message-id <message_id>
+    /// agentmail inboxes messages get --inbox-id <inbox_id> --message-id <message_id>
     /// ```
     ///
     /// # Arguments
@@ -115,6 +183,30 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .get(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &MessageID("message_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get(
         &self,
         inbox_id: &InboxesInboxId,
@@ -136,7 +228,7 @@ impl MessagesClient {
     ///
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages delete --inbox-id <inbox_id> --message-id <message_id>
+    /// agentmail inboxes messages delete --inbox-id <inbox_id> --message-id <message_id>
     /// ```
     ///
     /// # Arguments
@@ -146,6 +238,30 @@ impl MessagesClient {
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .delete(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &MessageID("message_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         inbox_id: &InboxesInboxId,
@@ -165,7 +281,7 @@ impl MessagesClient {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages update --inbox-id <inbox_id> --message-id <message_id> --add-label read --remove-label unread
+    /// agentmail inboxes messages update --inbox-id <inbox_id> --message-id <message_id> --add-labels read --remove-labels unread
     /// ```
     ///
     /// # Arguments
@@ -175,6 +291,33 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .update(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &MessageID("message_id".to_string()),
+    ///             &UpdateMessageRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn update(
         &self,
         inbox_id: &InboxesInboxId,
@@ -199,7 +342,7 @@ impl MessagesClient {
     ///
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages batch-get --inbox-id <inbox_id> --message-id <id1> --message-id <id2>
+    /// agentmail inboxes messages batch-get --inbox-id <inbox_id> --message-ids <id1> --message-ids <id2>
     /// ```
     ///
     /// # Arguments
@@ -209,6 +352,32 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .batch_get(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &BatchGetMessagesRequest {
+    ///                 message_ids: BatchGetMessagesMessageIDs(vec![MessageID("message_ids".to_string())]),
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn batch_get(
         &self,
         inbox_id: &InboxesInboxId,
@@ -235,7 +404,7 @@ impl MessagesClient {
     ///
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages batch-update --inbox-id <inbox_id> --message-id <id1> --message-id <id2> --add-label read --remove-label unread
+    /// agentmail inboxes messages batch-update --inbox-id <inbox_id> --message-ids <id1> --message-ids <id2> --add-labels read --remove-labels unread
     /// ```
     ///
     /// # Arguments
@@ -245,6 +414,36 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .batch_update(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &BatchUpdateMessagesRequest {
+    ///                 message_ids: BatchUpdateMessagesMessageIDs(vec![MessageID(
+    ///                     "message_ids".to_string(),
+    ///                 )]),
+    ///                 add_labels: None,
+    ///                 remove_labels: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn batch_update(
         &self,
         inbox_id: &InboxesInboxId,
@@ -264,7 +463,7 @@ impl MessagesClient {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages get-attachment --inbox-id <inbox_id> --message-id <message_id> --attachment-id <attachment_id>
+    /// agentmail inboxes messages get-attachment --inbox-id <inbox_id> --message-id <message_id> --attachment-id <attachment_id>
     /// ```
     ///
     /// # Arguments
@@ -274,6 +473,31 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .get_attachment(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &MessageID("message_id".to_string()),
+    ///             &AttachmentID("attachment_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get_attachment(
         &self,
         inbox_id: &InboxesInboxId,
@@ -297,7 +521,7 @@ impl MessagesClient {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages get-raw --inbox-id <inbox_id> --message-id <message_id>
+    /// agentmail inboxes messages get-raw --inbox-id <inbox_id> --message-id <message_id>
     /// ```
     ///
     /// # Arguments
@@ -307,6 +531,30 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .get_raw(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &MessageID("message_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get_raw(
         &self,
         inbox_id: &InboxesInboxId,
@@ -326,7 +574,7 @@ impl MessagesClient {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages send --inbox-id <inbox_id> --to recipient@example.com --subject "Hello" --text "Body"
+    /// agentmail inboxes messages send --inbox-id <inbox_id> --to recipient@example.com --subject "Hello" --text "Body"
     /// ```
     ///
     /// # Arguments
@@ -336,6 +584,32 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .send(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &SendMessageRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn send(
         &self,
         inbox_id: &InboxesInboxId,
@@ -355,7 +629,7 @@ impl MessagesClient {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages reply --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
+    /// agentmail inboxes messages reply --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
     /// ```
     ///
     /// # Arguments
@@ -365,6 +639,33 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .reply(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &MessageID("message_id".to_string()),
+    ///             &ReplyToMessageRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn reply(
         &self,
         inbox_id: &InboxesInboxId,
@@ -385,7 +686,7 @@ impl MessagesClient {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages reply-all --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
+    /// agentmail inboxes messages reply-all --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
     /// ```
     ///
     /// # Arguments
@@ -395,6 +696,33 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .reply_all(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &MessageID("message_id".to_string()),
+    ///             &ReplyAllMessageRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn reply_all(
         &self,
         inbox_id: &InboxesInboxId,
@@ -418,7 +746,7 @@ impl MessagesClient {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:messages forward --inbox-id <inbox_id> --message-id <message_id> --to recipient@example.com
+    /// agentmail inboxes messages forward --inbox-id <inbox_id> --message-id <message_id> --to recipient@example.com
     /// ```
     ///
     /// # Arguments
@@ -428,6 +756,33 @@ impl MessagesClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .messages
+    ///         .forward(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &MessageID("message_id".to_string()),
+    ///             &SendMessageRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn forward(
         &self,
         inbox_id: &InboxesInboxId,
@@ -440,117 +795,6 @@ impl MessagesClient {
                 Method::POST,
                 &format!(
                     "v0/inboxes/{}/messages/{}/forward",
-                    inbox_id.0, message_id.0
-                ),
-                Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),
-                None,
-                options,
-            )
-            .await
-    }
-
-    /// Create a draft that replies to a message instead of sending it. The
-    /// recipients, subject, and threading are derived from the source message.
-    /// Send it later with `Send Draft`.
-    ///
-    /// **CLI:**
-    /// ```bash
-    /// agentmail inboxes:messages draft-reply --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - Additional request options such as headers, timeout, etc.
-    ///
-    /// # Returns
-    ///
-    /// JSON response from the API
-    pub async fn draft_reply(
-        &self,
-        inbox_id: &InboxesInboxId,
-        message_id: &MessageId,
-        request: &CreateDraftReplyRequest,
-        options: Option<RequestOptions>,
-    ) -> Result<Draft, ApiError> {
-        self.http_client
-            .execute_request(
-                Method::POST,
-                &format!(
-                    "v0/inboxes/{}/messages/{}/draft-reply",
-                    inbox_id.0, message_id.0
-                ),
-                Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),
-                None,
-                options,
-            )
-            .await
-    }
-
-    /// Create a draft that replies to every recipient of a message instead of
-    /// sending it. Recipients, subject, and threading are derived from the
-    /// source message. Send it later with `Send Draft`.
-    ///
-    /// **CLI:**
-    /// ```bash
-    /// agentmail inboxes:messages draft-reply-all --inbox-id <inbox_id> --message-id <message_id> --text "Reply text"
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - Additional request options such as headers, timeout, etc.
-    ///
-    /// # Returns
-    ///
-    /// JSON response from the API
-    pub async fn draft_reply_all(
-        &self,
-        inbox_id: &InboxesInboxId,
-        message_id: &MessageId,
-        request: &CreateDraftReplyAllRequest,
-        options: Option<RequestOptions>,
-    ) -> Result<Draft, ApiError> {
-        self.http_client
-            .execute_request(
-                Method::POST,
-                &format!(
-                    "v0/inboxes/{}/messages/{}/draft-reply-all",
-                    inbox_id.0, message_id.0
-                ),
-                Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),
-                None,
-                options,
-            )
-            .await
-    }
-
-    /// Create a draft that forwards a message instead of sending it. The subject
-    /// and threading are derived from the source message, whose body and
-    /// attachments are merged in at send time. Send it later with `Send Draft`.
-    ///
-    /// **CLI:**
-    /// ```bash
-    /// agentmail inboxes:messages draft-forward --inbox-id <inbox_id> --message-id <message_id> --to recipient@example.com
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `options` - Additional request options such as headers, timeout, etc.
-    ///
-    /// # Returns
-    ///
-    /// JSON response from the API
-    pub async fn draft_forward(
-        &self,
-        inbox_id: &InboxesInboxId,
-        message_id: &MessageId,
-        request: &CreateDraftForwardRequest,
-        options: Option<RequestOptions>,
-    ) -> Result<Draft, ApiError> {
-        self.http_client
-            .execute_request(
-                Method::POST,
-                &format!(
-                    "v0/inboxes/{}/messages/{}/draft-forward",
                     inbox_id.0, message_id.0
                 ),
                 Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),

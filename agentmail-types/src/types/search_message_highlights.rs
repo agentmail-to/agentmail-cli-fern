@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 /// Matched fragments per field on a message search result, with matched terms

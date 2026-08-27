@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -14,6 +15,8 @@ pub struct Domain {
     pub feedback_enabled: FeedbackEnabled,
     #[serde(default)]
     pub subdomains_enabled: SubdomainsEnabled,
+    #[serde(default)]
+    pub tracking_enabled: TrackingEnabled,
     /// A list of DNS records required to verify the domain. Includes a
     /// wildcard MX record (`*.<domain>`) when `subdomains_enabled` is true.
     #[serde(default)]
@@ -45,6 +48,7 @@ pub struct DomainBuilder {
     status: Option<Status>,
     feedback_enabled: Option<FeedbackEnabled>,
     subdomains_enabled: Option<SubdomainsEnabled>,
+    tracking_enabled: Option<TrackingEnabled>,
     records: Option<Vec<VerificationRecord>>,
     client_id: Option<ClientId>,
     updated_at: Option<DateTime<FixedOffset>>,
@@ -82,6 +86,11 @@ impl DomainBuilder {
         self
     }
 
+    pub fn tracking_enabled(mut self, value: TrackingEnabled) -> Self {
+        self.tracking_enabled = Some(value);
+        self
+    }
+
     pub fn records(mut self, value: Vec<VerificationRecord>) -> Self {
         self.records = Some(value);
         self
@@ -109,6 +118,7 @@ impl DomainBuilder {
     /// - [`status`](DomainBuilder::status)
     /// - [`feedback_enabled`](DomainBuilder::feedback_enabled)
     /// - [`subdomains_enabled`](DomainBuilder::subdomains_enabled)
+    /// - [`tracking_enabled`](DomainBuilder::tracking_enabled)
     /// - [`records`](DomainBuilder::records)
     /// - [`updated_at`](DomainBuilder::updated_at)
     /// - [`created_at`](DomainBuilder::created_at)
@@ -120,6 +130,7 @@ impl DomainBuilder {
             status: self.status.ok_or_else(|| BuildError::missing_field("status"))?,
             feedback_enabled: self.feedback_enabled.ok_or_else(|| BuildError::missing_field("feedback_enabled"))?,
             subdomains_enabled: self.subdomains_enabled.ok_or_else(|| BuildError::missing_field("subdomains_enabled"))?,
+            tracking_enabled: self.tracking_enabled.ok_or_else(|| BuildError::missing_field("tracking_enabled"))?,
             records: self.records.ok_or_else(|| BuildError::missing_field("records"))?,
             client_id: self.client_id,
             updated_at: self.updated_at.ok_or_else(|| BuildError::missing_field("updated_at"))?,

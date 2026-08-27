@@ -21,7 +21,7 @@ impl MetricsClient3 {
     ///
     /// **CLI:**
     /// ```bash
-    /// agentmail pods:metrics query --pod-id <pod_id>
+    /// agentmail pods metrics query-events --pod-id <pod_id>
     /// ```
     ///
     /// # Arguments
@@ -31,6 +31,37 @@ impl MetricsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .metrics
+    ///         .query_events(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &PodsMetricsQueryEventsQueryRequest {
+    ///                 event_types: vec![],
+    ///                 start: None,
+    ///                 end: None,
+    ///                 period: None,
+    ///                 limit: None,
+    ///                 descending: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn query_events(
         &self,
         pod_id: &PodsPodId,
@@ -70,6 +101,37 @@ impl MetricsClient3 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .pods
+    ///         .metrics
+    ///         .query_usage(
+    ///             &PodsPodID("pod_id".to_string()),
+    ///             &PodsMetricsQueryUsageQueryRequest {
+    ///                 usage_types: vec![],
+    ///                 start: None,
+    ///                 end: None,
+    ///                 period: None,
+    ///                 limit: None,
+    ///                 descending: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn query_usage(
         &self,
         pod_id: &PodsPodId,

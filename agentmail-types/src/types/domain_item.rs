@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
@@ -13,6 +14,8 @@ pub struct DomainItem {
     pub feedback_enabled: FeedbackEnabled,
     #[serde(default)]
     pub subdomains_enabled: SubdomainsEnabled,
+    #[serde(default)]
+    pub tracking_enabled: TrackingEnabled,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<ClientId>,
     /// Time at which the domain was last updated.
@@ -39,6 +42,7 @@ pub struct DomainItemBuilder {
     domain: Option<DomainName>,
     feedback_enabled: Option<FeedbackEnabled>,
     subdomains_enabled: Option<SubdomainsEnabled>,
+    tracking_enabled: Option<TrackingEnabled>,
     client_id: Option<ClientId>,
     updated_at: Option<DateTime<FixedOffset>>,
     created_at: Option<DateTime<FixedOffset>>,
@@ -70,6 +74,11 @@ impl DomainItemBuilder {
         self
     }
 
+    pub fn tracking_enabled(mut self, value: TrackingEnabled) -> Self {
+        self.tracking_enabled = Some(value);
+        self
+    }
+
     pub fn client_id(mut self, value: ClientId) -> Self {
         self.client_id = Some(value);
         self
@@ -91,6 +100,7 @@ impl DomainItemBuilder {
     /// - [`domain`](DomainItemBuilder::domain)
     /// - [`feedback_enabled`](DomainItemBuilder::feedback_enabled)
     /// - [`subdomains_enabled`](DomainItemBuilder::subdomains_enabled)
+    /// - [`tracking_enabled`](DomainItemBuilder::tracking_enabled)
     /// - [`updated_at`](DomainItemBuilder::updated_at)
     /// - [`created_at`](DomainItemBuilder::created_at)
     pub fn build(self) -> Result<DomainItem, BuildError> {
@@ -100,6 +110,7 @@ impl DomainItemBuilder {
             domain: self.domain.ok_or_else(|| BuildError::missing_field("domain"))?,
             feedback_enabled: self.feedback_enabled.ok_or_else(|| BuildError::missing_field("feedback_enabled"))?,
             subdomains_enabled: self.subdomains_enabled.ok_or_else(|| BuildError::missing_field("subdomains_enabled"))?,
+            tracking_enabled: self.tracking_enabled.ok_or_else(|| BuildError::missing_field("tracking_enabled"))?,
             client_id: self.client_id,
             updated_at: self.updated_at.ok_or_else(|| BuildError::missing_field("updated_at"))?,
             created_at: self.created_at.ok_or_else(|| BuildError::missing_field("created_at"))?,

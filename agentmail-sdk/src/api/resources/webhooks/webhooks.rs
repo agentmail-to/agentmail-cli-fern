@@ -25,6 +25,30 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .list(
+    ///             &WebhooksListQueryRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         request: &WebhooksListQueryRequest,
@@ -47,7 +71,7 @@ impl WebhooksClient {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail webhooks create --url https://example.com/webhook --event-type message.received
+    /// agentmail webhooks create --url https://example.com/webhook --event-types message.received
     /// ```
     ///
     /// # Arguments
@@ -57,6 +81,37 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .create(
+    ///             &WebhooksCreateWebhookRequest {
+    ///                 url: WebhooksURL("url".to_string()),
+    ///                 event_types: WebhooksCreateWebhookEventTypes(EventTypes(vec![
+    ///                     EventType::MessageReceived,
+    ///                 ])),
+    ///                 inbox_ids: None,
+    ///                 client_id: None,
+    ///                 headers: None,
+    ///                 pod_ids: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn create(
         &self,
         request: &WebhooksCreateWebhookRequest,
@@ -85,6 +140,25 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .get(&WebhooksWebhookID("webhook_id".to_string()), None)
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get(
         &self,
         webhook_id: &WebhooksWebhookId,
@@ -113,6 +187,25 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .delete(&WebhooksWebhookID("webhook_id".to_string()), None)
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         webhook_id: &WebhooksWebhookId,
@@ -134,7 +227,7 @@ impl WebhooksClient {
     ///
     /// **CLI:**
     /// ```bash
-    /// agentmail webhooks update --webhook-id <webhook_id> --add-inbox-id <inbox_id>
+    /// agentmail webhooks update --webhook-id <webhook_id> --add-inbox-ids <inbox_id>
     /// ```
     ///
     /// # Arguments
@@ -144,6 +237,31 @@ impl WebhooksClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .update(
+    ///             &WebhooksWebhookID("webhook_id".to_string()),
+    ///             &WebhooksUpdateWebhookRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn update(
         &self,
         webhook_id: &WebhooksWebhookId,
@@ -154,6 +272,103 @@ impl WebhooksClient {
             .execute_request(
                 Method::PATCH,
                 &format!("v0/webhooks/{}", webhook_id.0),
+                Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),
+                None,
+                options,
+            )
+            .await
+    }
+
+    /// List the names of custom HTTP headers included with deliveries to this webhook. Header values are
+    /// write-only and are never returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .get_headers(&WebhooksWebhookID("webhook_id".to_string()), None)
+    ///         .await;
+    /// }
+    /// ```
+    pub async fn get_headers(
+        &self,
+        webhook_id: &WebhooksWebhookId,
+        options: Option<RequestOptions>,
+    ) -> Result<WebhooksWebhookHeaderNamesResponse, ApiError> {
+        self.http_client
+            .execute_request(
+                Method::GET,
+                &format!("v0/webhooks/{}/headers", webhook_id.0),
+                None,
+                None,
+                options,
+            )
+            .await
+    }
+
+    /// Atomically set, replace, or remove custom HTTP headers included with deliveries to this webhook.
+    /// Header values remain write-only.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Additional request options such as headers, timeout, etc.
+    ///
+    /// # Returns
+    ///
+    /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .webhooks
+    ///         .update_headers(
+    ///             &WebhooksWebhookID("webhook_id".to_string()),
+    ///             &WebhooksUpdateWebhookHeadersRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
+    pub async fn update_headers(
+        &self,
+        webhook_id: &WebhooksWebhookId,
+        request: &WebhooksUpdateWebhookHeadersRequest,
+        options: Option<RequestOptions>,
+    ) -> Result<(), ApiError> {
+        self.http_client
+            .execute_request(
+                Method::PATCH,
+                &format!("v0/webhooks/{}/headers", webhook_id.0),
                 Some(serde_json::to_value(request).map_err(ApiError::Serialization)?),
                 None,
                 options,

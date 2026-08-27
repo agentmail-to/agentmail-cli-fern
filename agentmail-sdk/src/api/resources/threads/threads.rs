@@ -34,6 +34,42 @@ impl ThreadsClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .threads
+    ///         .list(
+    ///             &ThreadsListQueryRequest {
+    ///                 limit: None,
+    ///                 page_token: None,
+    ///                 labels: vec![],
+    ///                 before: None,
+    ///                 after: None,
+    ///                 ascending: None,
+    ///                 include_spam: None,
+    ///                 include_blocked: None,
+    ///                 include_unauthenticated: None,
+    ///                 include_trash: None,
+    ///                 senders: None,
+    ///                 recipients: None,
+    ///                 subject: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         request: &ThreadsListQueryRequest,
@@ -80,6 +116,34 @@ impl ThreadsClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .threads
+    ///         .search(
+    ///             &ThreadsSearchQueryRequest {
+    ///                 q: Query("q".to_string()),
+    ///                 limit: None,
+    ///                 page_token: None,
+    ///                 before: None,
+    ///                 after: None,
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn search(
         &self,
         request: &ThreadsSearchQueryRequest,
@@ -114,6 +178,25 @@ impl ThreadsClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .threads
+    ///         .get(&ThreadID("thread_id".to_string()), None)
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get(
         &self,
         thread_id: &ThreadId,
@@ -130,7 +213,7 @@ impl ThreadsClient {
             .await
     }
 
-    /// Moves the thread to trash by adding a trash label to all messages. If the thread is already in trash, it will be permanently deleted. Use `permanent=true` to force permanent deletion.
+    /// Permanently deletes a thread and all of its messages.
     ///
     /// **CLI:**
     /// ```bash
@@ -139,16 +222,33 @@ impl ThreadsClient {
     ///
     /// # Arguments
     ///
-    /// * `permanent` - If true, permanently delete the thread instead of moving to trash.
     /// * `options` - Additional request options such as headers, timeout, etc.
     ///
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .threads
+    ///         .delete(&ThreadID("thread_id".to_string()), None)
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         thread_id: &ThreadId,
-        request: &ThreadsDeleteQueryRequest,
         options: Option<RequestOptions>,
     ) -> Result<(), ApiError> {
         self.http_client
@@ -156,9 +256,7 @@ impl ThreadsClient {
                 Method::DELETE,
                 &format!("v0/threads/{}", thread_id.0),
                 None,
-                QueryBuilder::new()
-                    .serialize("permanent", request.permanent.clone())
-                    .build(),
+                None,
                 options,
             )
             .await
@@ -173,6 +271,31 @@ impl ThreadsClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .threads
+    ///         .update(
+    ///             &ThreadID("thread_id".to_string()),
+    ///             &UpdateThreadRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn update(
         &self,
         thread_id: &ThreadId,
@@ -202,6 +325,29 @@ impl ThreadsClient {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .threads
+    ///         .get_attachment(
+    ///             &ThreadID("thread_id".to_string()),
+    ///             &AttachmentID("attachment_id".to_string()),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get_attachment(
         &self,
         thread_id: &ThreadId,

@@ -1,4 +1,5 @@
 pub use crate::prelude::*;
+#[allow(unused_imports)]
 use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
@@ -9,6 +10,8 @@ pub struct CreateDomainRequest {
     pub feedback_enabled: Option<FeedbackEnabled>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subdomains_enabled: Option<SubdomainsEnabled>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracking_enabled: Option<TrackingEnabled>,
 }
 
 impl CreateDomainRequest {
@@ -23,6 +26,7 @@ pub struct CreateDomainRequestBuilder {
     domain: Option<DomainName>,
     feedback_enabled: Option<FeedbackEnabled>,
     subdomains_enabled: Option<SubdomainsEnabled>,
+    tracking_enabled: Option<TrackingEnabled>,
 }
 
 impl CreateDomainRequestBuilder {
@@ -41,6 +45,11 @@ impl CreateDomainRequestBuilder {
         self
     }
 
+    pub fn tracking_enabled(mut self, value: TrackingEnabled) -> Self {
+        self.tracking_enabled = Some(value);
+        self
+    }
+
     /// Consumes the builder and constructs a [`CreateDomainRequest`].
     /// This method will fail if any of the following fields are not set:
     /// - [`domain`](CreateDomainRequestBuilder::domain)
@@ -49,6 +58,7 @@ impl CreateDomainRequestBuilder {
             domain: self.domain.ok_or_else(|| BuildError::missing_field("domain"))?,
             feedback_enabled: self.feedback_enabled,
             subdomains_enabled: self.subdomains_enabled,
+            tracking_enabled: self.tracking_enabled,
         })
     }
 }

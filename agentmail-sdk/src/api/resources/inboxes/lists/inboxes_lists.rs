@@ -15,7 +15,7 @@ impl ListsClient2 {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:lists list --inbox-id <inbox_id> --direction <direction> --type <type>
+    /// agentmail inboxes lists list --inbox-id <inbox_id> --direction <direction> --type <type>
     /// ```
     ///
     /// # Arguments
@@ -25,6 +25,34 @@ impl ListsClient2 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .lists
+    ///         .list(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &Direction::Send,
+    ///             &ListType::Allow,
+    ///             &InboxesListsListQueryRequest {
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn list(
         &self,
         inbox_id: &InboxesInboxId,
@@ -49,7 +77,7 @@ impl ListsClient2 {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:lists create --inbox-id <inbox_id> --direction <direction> --type <type> --entry user@example.com
+    /// agentmail inboxes lists create --inbox-id <inbox_id> --direction <direction> --type <type> --entry user@example.com
     /// ```
     ///
     /// # Arguments
@@ -59,6 +87,35 @@ impl ListsClient2 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .lists
+    ///         .create(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &Direction::Send,
+    ///             &ListType::Allow,
+    ///             &CreateListEntryRequest {
+    ///                 entry: "entry".to_string(),
+    ///                 ..Default::default()
+    ///             },
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn create(
         &self,
         inbox_id: &InboxesInboxId,
@@ -80,7 +137,7 @@ impl ListsClient2 {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:lists get --inbox-id <inbox_id> --direction <direction> --type <type> --entry <entry>
+    /// agentmail inboxes lists get --inbox-id <inbox_id> --direction <direction> --type <type> --entry <entry>
     /// ```
     ///
     /// # Arguments
@@ -91,6 +148,32 @@ impl ListsClient2 {
     /// # Returns
     ///
     /// JSON response from the API
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .lists
+    ///         .get(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &Direction::Send,
+    ///             &ListType::Allow,
+    ///             &"entry".to_string(),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn get(
         &self,
         inbox_id: &InboxesInboxId,
@@ -115,7 +198,7 @@ impl ListsClient2 {
 
     /// **CLI:**
     /// ```bash
-    /// agentmail inboxes:lists delete --inbox-id <inbox_id> --direction <direction> --type <type> --entry <entry>
+    /// agentmail inboxes lists delete --inbox-id <inbox_id> --direction <direction> --type <type> --entry <entry>
     /// ```
     ///
     /// # Arguments
@@ -126,6 +209,32 @@ impl ListsClient2 {
     /// # Returns
     ///
     /// Empty response
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use agentmail_sdk::prelude::*;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let config = ClientConfig {
+    ///         token: Some("<token>".to_string()),
+    ///         ..Default::default()
+    ///     };
+    ///     let client = AgentmailClient::new(config).expect("Failed to build client");
+    ///     client
+    ///         .inboxes
+    ///         .lists
+    ///         .delete(
+    ///             &InboxesInboxID("inbox_id".to_string()),
+    ///             &Direction::Send,
+    ///             &ListType::Allow,
+    ///             &"entry".to_string(),
+    ///             None,
+    ///         )
+    ///         .await;
+    /// }
+    /// ```
     pub async fn delete(
         &self,
         inbox_id: &InboxesInboxId,
